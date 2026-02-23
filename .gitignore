@@ -28,3 +28,6 @@ flwr_tokens.json
 
 # Model outputs
 *.pt
+
+# Temp files
+.flwr/
