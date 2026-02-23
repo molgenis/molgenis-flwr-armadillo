@@ -1,0 +1,62 @@
+services:
+  superlink:
+    image: flwr/superlink:1.23.0
+    command: --insecure --isolation process
+    ports:
+      - "9091:9091"
+      - "9092:9092"
+      - "9093:9093"
+
+  supernode-demo:
+    image: flwr/supernode:1.23.0
+    command:
+      - --insecure
+      - --superlink=superlink:9092
+      - --node-config
+      - 'partition-id=0 num-partitions=2 node-name="demo"'
+      - --clientappio-api-address=0.0.0.0:9094
+      - --isolation=process
+    ports:
+      - "9094:9094"
+    depends_on:
+      - superlink
+
+  supernode-localhost:
+    image: flwr/supernode:1.23.0
+    command:
+      - --insecure
+      - --superlink=superlink:9092
+      - --node-config
+      - 'partition-id=1 num-partitions=2 node-name="localhost"'
+      - --clientappio-api-address=0.0.0.0:9095
+      - --isolation=process
+    ports:
+      - "9095:9095"
+    depends_on:
+      - superlink
+
+  clientapp-demo:
+    image: superexec-test:1.0.0
+    command: >
+      --insecure
+      --plugin-type clientapp      --appio-api-address supernode-demo:9094
+    depends_on:
+      - supernode-demo
+
+  clientapp-localhost:
+    image: superexec-test:1.0.0
+    command: >
+      --insecure
+      --plugin-type clientapp
+      --appio-api-address supernode-localhost:9095
+    depends_on:
+      - supernode-localhost
+
+  serverapp:
+    image: superexec-test:1.0.0
+    command: >
+      --insecure
+      --plugin-type serverapp
+      --appio-api-address superlink:9091
+    depends_on:
+      - superlink
