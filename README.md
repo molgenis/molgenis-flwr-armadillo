@@ -16,7 +16,7 @@ pip install -e .
 
 ```bash
 # 1. Authenticate to all nodes (opens browser for each)
-molgenis-flwr-authenticate --config flower-nodes.yaml
+molgenis-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
 
 # 2. Run the Flower app with tokens automatically injected
 molgenis-flwr-run --app-dir examples/quickstart-pytorch
@@ -45,7 +45,7 @@ In production, each site configures their `node-name` in the Armadillo UI. The s
 
 ### 1. `flower-nodes.yaml` - Define your Armadillo servers
 
-Save this in your Flower app directory (alongside `pyproject.toml`):
+Save this in your Flower app directory (e.g., `examples/quickstart-pytorch/flower-nodes.yaml`):
 
 ```yaml
 nodes:
@@ -188,7 +188,7 @@ docker compose up -d
 
 # 3. Authenticate
 cd ../..
-molgenis-flwr-authenticate --config flower-nodes.yaml
+molgenis-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
 
 # 4. Run
 molgenis-flwr-run --app-dir examples/quickstart-pytorch
