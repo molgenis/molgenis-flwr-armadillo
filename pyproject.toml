@@ -26,7 +26,9 @@ classifiers = [
 ]
 dependencies = [
   "pyyaml",
-  "molgenis-auth",
+  "requests",
+  "rich",
+  "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
 ]
 
 [project.urls]
@@ -65,7 +67,10 @@ exclude_lines = [
 
 [project.scripts]
 molgenis-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
-molgenis-flwr-run = "molgenis_flwr_armadillo.run:main"
+#molgenis-flwr-run = "molgenis_flwr_armadillo.run:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/molgenis_flwr_armadillo"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
