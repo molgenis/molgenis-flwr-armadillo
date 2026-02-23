@@ -263,6 +263,129 @@ Model parameters are clipped on the client side and noise is added server-side b
 
 ---
 
+## Stage 5: Per-Container Permissions
+
+**Goal:** Extend Armadillo's permission model so users have access to specific containers (DataSHIELD profiles or Flower client-apps), not just projects.
+
+### Current Model
+
+```
+User → Project → [all containers]
+```
+
+All authenticated users with project access can use any container.
+
+### Target Model
+
+```
+User → Project → Container(s) they're permitted to use
+                    ├── DataSHIELD: default, donkey, panda-lambda
+                    └── Flower: lung-cancer-fl, diabetes-study
+```
+
+### Changes
+
+**1. Armadillo: Extend permission data model**
+
+Update `ProjectPermission` to include container:
+
+```java
+// Before
+public record ProjectPermission(String email, String project) {}
+
+// After
+public record ProjectPermission(String email, String project, String container) {}
+```
+
+Update `access.json` structure:
+```json
+{
+  "permissions": [
+    {"email": "user@example.com", "project": "cohort-study", "container": "default"},
+    {"email": "user@example.com", "project": "cohort-study", "container": "lung-cancer-fl"}
+  ]
+}
+```
+
+**2. Armadillo: Update role generation**
+
+In `AccessService.getAuthoritiesForEmail()`:
+
+```java
+// Before
+"ROLE_" + project.toUpperCase() + "_RESEARCHER"
+
+// After
+"ROLE_" + project.toUpperCase() + "_" + container.toUpperCase() + "_RESEARCHER"
+```
+
+**3. Armadillo: Add authorization checks**
+
+DataSHIELD container selection:
+```java
+// In ProfileService or similar
+@PreAuthorize("hasAnyRole('ROLE_SU', 'ROLE_' + #project.toUpperCase() + '_' + #container.toUpperCase() + '_RESEARCHER')")
+public void selectProfile(String project, String container) { ... }
+```
+
+Flower data fetch (client-app must identify itself):
+```java
+@PreAuthorize("hasAnyRole('ROLE_SU', 'ROLE_' + #project.toUpperCase() + '_' + #appId.toUpperCase() + '_RESEARCHER')")
+public InputStream loadObjectForApp(String project, String object, String appId) { ... }
+```
+
+**4. Armadillo: Permission management API**
+
+New/updated endpoints in `AccessController`:
+```
+POST   /access/projects/{project}/containers/{container}/users
+DELETE /access/projects/{project}/containers/{container}/users/{email}
+GET    /access/projects/{project}/containers
+GET    /access/users/{email}/containers
+```
+
+**5. Armadillo: UI extension**
+
+Extend user management page to show/edit container permissions per project. Minimal change - add a multi-select or checkbox list for containers.
+
+**6. Migration strategy**
+
+For existing permissions without container specified:
+- Option A: Grant access to ALL containers (backwards compatible)
+- Option B: Grant access to a "default" container only (more restrictive)
+
+Recommend Option A for smooth migration.
+
+**7. Flower client-app: Pass app ID when fetching data**
+
+Update `fetch_from_armadillo()` to include app identifier:
+```python
+def fetch_from_armadillo(url: str, project: str, object_name: str, token: str, app_id: str) -> bytes:
+    endpoint = f"{url}/storage/projects/{project}/objects/{object_name}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-App-Id": app_id  # or as query param
+    }
+    ...
+```
+
+### Verification
+
+1. User with container permission can access that container
+2. User without container permission gets 403
+3. Existing permissions continue to work (migration)
+4. Both DataSHIELD and Flower apps respect container permissions
+
+### Done when
+
+- Permission model extended with container field
+- Authorization checks enforce container access
+- API endpoints for managing container permissions
+- UI allows assigning users to containers
+- Flower client-apps pass app ID and permissions are enforced
+
+---
+
 ## Files Summary
 
 All Python files are in `molgenis-flwr-armadillo` (`epic/flower` branch):
@@ -282,9 +405,335 @@ Armadillo changes in `molgenis-service-armadillo` (`epic/flower` branch):
 |------|--------|-------|
 | `StorageController.java` | Modify | 3 |
 
+## Helper Functions for Researchers
+
+**Goal:** Reduce boilerplate in researcher code by providing helper functions in `molgenis_flwr_armadillo` for token handling.
+
+### Current Pain Point
+
+Researchers must copy token-handling code into their apps:
+
+**Server side:**
+```python
+# Collect all tokens from run_config to pass to clients
+tokens = {k: v for k, v in context.run_config.items() if k.startswith("token-")}
+train_config = ConfigRecord({"lr": lr, **tokens})
+```
+
+**Client side:**
+```python
+node_name = context.node_config["node-name"]
+token = msg.content["config"].get(f"token-{node_name}", "")
+```
+
+### Solution: Helper Functions
+
+Add to `src/molgenis_flwr_armadillo/helpers.py`:
+
+```python
+"""Helper functions for token handling in Flower apps."""
+
+from flwr.app import Context, Message
+
+
+def extract_tokens(context: Context) -> dict:
+    """Extract all tokens from run_config for passing to clients.
+
+    Use in server_app.py to collect tokens for the train_config.
+
+    Args:
+        context: The Flower Context object
+
+    Returns:
+        Dict of token keys to token values, e.g. {"token-demo": "eyJ..."}
+
+    Example:
+        tokens = extract_tokens(context)
+        train_config = ConfigRecord({"lr": lr, **tokens})
+    """
+    return {k: v for k, v in context.run_config.items() if k.startswith("token-")}
+
+
+def get_node_token(msg: Message, context: Context) -> str:
+    """Extract this node's token from the message config.
+
+    Use in client_app.py to get the token for this specific node.
+
+    Args:
+        msg: The Flower Message received from the server
+        context: The Flower Context object
+
+    Returns:
+        The token string for this node, or empty string if not found
+
+    Example:
+        token = get_node_token(msg, context)
+        data = fetch_from_armadillo(token)
+    """
+    node_name = context.node_config.get("node-name", "")
+    return msg.content.get("config", {}).get(f"token-{node_name}", "")
+```
+
+### Updated Researcher Code
+
+**Server side:**
+```python
+from molgenis_flwr_armadillo import extract_tokens
+
+@app.main()
+def main(grid: Grid, context: Context) -> None:
+    lr = context.run_config["learning-rate"]
+    tokens = extract_tokens(context)
+    train_config = ConfigRecord({"lr": lr, **tokens})
+    # ...
+```
+
+**Client side:**
+```python
+from molgenis_flwr_armadillo import get_node_token
+
+@app.train()
+def train(msg: Message, context: Context):
+    token = get_node_token(msg, context)
+    # Use token to fetch data from Armadillo
+    # ...
+```
+
+### Changes Required
+
+1. **New file:** `src/molgenis_flwr_armadillo/helpers.py` — the helper functions
+2. **Update:** `src/molgenis_flwr_armadillo/__init__.py` — export the helpers
+3. **Update:** `README.md` — document the helper functions
+4. **Update:** Example apps — use the helpers instead of inline code
+
+### Done when
+- Helper functions are implemented and exported
+- Examples use the helper functions
+- README documents the helpers
+
+---
+
+## Error Handling for Data Fetches
+
+**Goal:** Provide clear, actionable error messages when Armadillo data requests fail, rather than generic HTTP errors.
+
+### Approach
+
+We chose **not** to validate tokens upfront because:
+1. Token validity alone isn't enough — project/data access must also be checked
+2. The coordinator doesn't know what specific data the app will request
+3. Upfront validation adds complexity and extra network calls
+
+Instead, we invest in **clear error messages at the point of failure**.
+
+### Implementation
+
+Wrap all Armadillo HTTP requests with descriptive error handling:
+
+```python
+class ArmadilloError(Exception):
+    """Base exception for Armadillo access errors."""
+    pass
+
+class AuthenticationError(ArmadilloError):
+    """Token is invalid or expired."""
+    pass
+
+class AccessDeniedError(ArmadilloError):
+    """User lacks permission to access this resource."""
+    pass
+
+class ResourceNotFoundError(ArmadilloError):
+    """Requested project or object does not exist."""
+    pass
+
+
+def fetch_from_armadillo(url: str, project: str, object_name: str, token: str) -> bytes:
+    """Fetch data from Armadillo with clear error handling."""
+    endpoint = f"{url}/storage/projects/{project}/objects/{object_name}"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = requests.get(endpoint, headers=headers)
+
+    if resp.status_code == 401:
+        raise AuthenticationError(
+            f"Authentication failed for '{url}'.\n"
+            f"Token may be expired — re-run: molgenis-flwr-authenticate"
+        )
+    if resp.status_code == 403:
+        raise AccessDeniedError(
+            f"Access denied to project '{project}' on '{url}'.\n"
+            f"Check your permissions in Armadillo."
+        )
+    if resp.status_code == 404:
+        raise ResourceNotFoundError(
+            f"Object '{object_name}' not found in project '{project}'.\n"
+            f"Available data can be listed with: molgenis-flwr-tables"
+        )
+
+    resp.raise_for_status()
+    return resp.content
+```
+
+### Error messages should:
+- Identify which node/server had the problem
+- Explain what went wrong in plain language
+- Suggest a remediation action
+- Propagate cleanly back to the user (not buried in stack traces)
+
+### Done when
+- All Armadillo requests use the error-handling wrapper
+- Error messages are clear and actionable
+- Errors propagate to the user with node context
+
+---
+
+## List Available Data (`molgenis-flwr-tables`)
+
+**Goal:** Provide a way for researchers to see what data they have access to on each Armadillo node, similar to `datashield.tables()`. Run this after authentication but before `molgenis-flwr-run`.
+
+### Usage
+
+```bash
+# After authenticating
+molgenis-flwr-authenticate --config flower-nodes.yaml
+
+# List available tables/data on all nodes
+molgenis-flwr-tables --config flower-nodes.yaml
+```
+
+Output:
+```
+Node: demo (https://armadillo-demo.molgenis.net)
+  Projects:
+    - cifar10
+      - partitions/partition_0_train.pt
+      - partitions/partition_0_test.pt
+    - cohort_data
+      - tables/demographics
+      - tables/outcomes
+
+Node: localhost (https://armadillo.dev.molgenis.org)
+  Projects:
+    - cifar10
+      - partitions/partition_1_train.pt
+      - partitions/partition_1_test.pt
+```
+
+### Implementation
+
+Add CLI entry point in `pyproject.toml`:
+```toml
+[project.scripts]
+molgenis-flwr-tables = "molgenis_flwr_armadillo.tables:main"
+```
+
+New file `src/molgenis_flwr_armadillo/tables.py`:
+```python
+"""List available data on Armadillo nodes."""
+
+import requests
+from .authenticate import load_tokens
+
+def list_projects(url: str, token: str) -> list[str]:
+    """List projects the user has access to."""
+    resp = requests.get(
+        f"{url}/storage/projects",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def list_objects(url: str, project: str, token: str) -> list[str]:
+    """List objects in a project."""
+    resp = requests.get(
+        f"{url}/storage/projects/{project}/objects",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def main():
+    # Load config and tokens, list data for each node
+    ...
+```
+
+### Programmatic access
+
+Also expose as a helper function for use in code:
+```python
+from molgenis_flwr_armadillo import list_available_data
+
+# Returns dict of node -> projects -> objects
+data = list_available_data(config_path="flower-nodes.yaml")
+```
+
+### Done when
+- CLI command `molgenis-flwr-tables` works
+- Helper function `list_available_data()` is exported
+- Output is clear and shows the hierarchy
+
+---
+
 ## Known Risks
 
 1. **Shell escaping**: Long JWT tokens on the command line may cause issues. May need a config file approach.
 2. **Token TTL**: Default 300s. Fine for simulation. For production, increase or implement refresh.
 3. **rawfiles object name matching**: `StorageController.java:440-441` strips extension and lowercases. Token generation must match.
 4. **Data security**: Data is held in memory only — never written to disk. Containers should be ephemeral.
+
+---
+
+## Progress Checklist
+
+### Infrastructure
+- [x] Package structure (`molgenis_flwr_armadillo`)
+- [x] CLI tool: `molgenis-flwr-authenticate`
+- [x] CLI tool: `molgenis-flwr-run`
+- [x] Token storage/retrieval (`save_tokens`, `load_tokens`)
+- [ ] Helper functions (`extract_tokens`, `get_node_token`)
+- [ ] CLI tool: `molgenis-flwr-tables` (list available data)
+- [ ] Helper function: `list_available_data()`
+- [ ] Error handling wrapper for Armadillo requests
+
+### Stage 1: Token String Routing POC
+- [x] Token placeholder keys in `pyproject.toml`
+- [x] Token extraction in client_app.py
+- [x] Token forwarding via ConfigRecord in server_app.py
+- [x] End-to-end token flow verified
+
+### Stage 2: Armadillo Data Access
+- [ ] Setup script for uploading data to Armadillo
+- [ ] `download_from_armadillo()` function
+- [ ] Client data loading from Armadillo
+- [ ] Server global evaluation from Armadillo
+- [ ] End-to-end data flow verified
+
+### Stage 3: Token-Authenticated Access
+- [ ] Armadillo: token generation endpoint
+- [ ] Armadillo: token-authenticated download endpoint
+- [ ] Script to obtain resource tokens
+- [ ] Per-partition token keys in config
+- [ ] Token-based download in task.py
+- [ ] End-to-end authenticated flow verified
+
+### Stage 4: Differential Privacy
+- [ ] DP strategy wrapper in server_app.py
+- [ ] Clipping mod in client_app.py
+- [ ] DP config parameters
+- [ ] Privacy-utility tradeoff documented
+
+### Stage 5: Per-Container Permissions
+- [ ] Armadillo: Extend `ProjectPermission` with container field
+- [ ] Armadillo: Update role generation for container-scoped roles
+- [ ] Armadillo: Add `@PreAuthorize` checks for container access
+- [ ] Armadillo: Permission management API endpoints
+- [ ] Armadillo: UI extension for container permissions
+- [ ] Armadillo: Migration for existing permissions
+- [ ] Flower: Pass app ID when fetching data
+
+### Documentation
+- [x] README with usage instructions
+- [x] Configuration flow diagram
+- [x] Token flow diagram
+- [ ] Helper functions documented in README
