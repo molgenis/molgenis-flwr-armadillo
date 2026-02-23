@@ -33,6 +33,8 @@ def run(app_dir: str = ".") -> None:
     console.print()
     console.print(f"Running: [cyan]flwr run {app_dir}[/cyan]")
     console.print(f"With tokens for: [green]{', '.join(t.replace('token-', '') for t in tokens.keys())}[/green]")
+    console.print(f"[dim]run-config: {run_config[:100]}...[/dim]")
+    console.print(f"[dim]Full command: {' '.join(cmd[:4])} --run-config '...'[/dim]")
     console.print()
 
     result = subprocess.run(cmd)
