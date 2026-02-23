@@ -3,8 +3,8 @@
 A wrapper for running Flower federated learning with in conjuncture with Molgenis Armadillo.
 
 ## Overview
-
-This package provides CLI tools to authenticate with multiple Armadillo servers and run Flower federated learning jobs with automatic token injection.
+The open-source edition of flower doesn't include individual-level authentication. This package extends flower by providing
+CLI tools to 1) authenticate with Armadillo supernodes and 2) run Flower using these tokens.
 
 ## Installation
 
@@ -32,29 +32,31 @@ molgenis-flwr-run --app-dir examples/quickstart-pytorch
 │  (researcher config)       (app config)           (specified by each site) │
 │                                                                             │
 │  nodes:                    [tool.flwr.app.config]  flower-supernode \       │
-│    barcelona:              token-barcelona = ""      --node-config \        │
-│    groningen:              token-groningen = ""      'node-name="barcelona"'│
+│    demo:                   token-demo = ""           --node-config \        │
+│    localhost:              token-localhost = ""      'node-name="demo"'     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **All three must use the same node names!**
 
-In production, each site (Barcelona, Groningen, etc.) configures their `node-name` in the Armadillo UI. The site admin sets this when setting up their Armadillo instance for federated learning.
+In production, each site configures their `node-name` in the Armadillo UI. The site admin sets this when setting up their Armadillo instance for federated learning.
 
 ## File Configuration
 
 ### 1. `flower-nodes.yaml` - Define your Armadillo servers
 
+Save this in your Flower app directory (alongside `pyproject.toml`):
+
 ```yaml
 nodes:
-  barcelona:
-    url: "https://armadillo.isglobal.org"
-  groningen:
-    url: "https://armadillo.umcg.nl"
+  demo:
+    url: "https://armadillo-demo.molgenis.net"
+  localhost:
+    url: "https://armadillo.dev.molgenis.org"
 ```
 
-The node names (`barcelona`, `groningen`) are used to:
-- Name the tokens (`token-barcelona`, `token-groningen`)
+The node names (`demo`, `localhost`) are used to:
+- Name the tokens (`token-demo`, `token-localhost`)
 - Match with SuperNode `node-name` configuration
 
 ### 2. `pyproject.toml` - App configuration (in your Flower app)
@@ -66,8 +68,8 @@ fraction-evaluate = 0.5
 local-epochs = 1
 learning-rate = 0.1
 batch-size = 32
-token-barcelona = ""
-token-groningen = ""
+token-demo = ""
+token-localhost = ""
 
 [tool.flwr.federations]
 default = "local-deployment"
@@ -79,31 +81,11 @@ insecure = true
 
 **Important:** Token keys must match node names from `flower-nodes.yaml`.
 
-### 3. `docker-compose.yml` - SuperNode configuration
+### 3. SuperNode `node-name` - Configured by each site
 
-```yaml
-supernode-barcelona:
-  image: flwr/supernode:1.23.0
-  command:
-    - --insecure
-    - --superlink=superlink:9092
-    - --node-config
-    - 'partition-id=0 num-partitions=2 node-name="barcelona"'
-    - --clientappio-api-address=0.0.0.0:9094
-    - --isolation=process
+In production, each site's Armadillo admin configures their `node-name` in the Armadillo UI. This is set once when the site joins the federation.
 
-supernode-groningen:
-  image: flwr/supernode:1.23.0
-  command:
-    - --insecure
-    - --superlink=superlink:9092
-    - --node-config
-    - 'partition-id=1 num-partitions=2 node-name="groningen"'
-    - --clientappio-api-address=0.0.0.0:9095
-    - --isolation=process
-```
-
-**Important:** `node-name` must match the node names from `flower-nodes.yaml`.
+The researcher must use matching names in `flower-nodes.yaml` and `pyproject.toml`.
 
 ## Token Flow
 
@@ -175,6 +157,26 @@ def train(msg: Message, context: Context):
 
 ## Running Locally with Docker
 
+For local testing, use Docker Compose to simulate the SuperNodes. The `node-name` is set via command line args (in production this is configured in the Armadillo UI).
+
+See `examples/docker/` for the full setup. The key configuration is:
+
+```yaml
+supernode-demo:
+  image: flwr/supernode:1.23.0
+  command:
+    - --insecure
+    - --superlink=superlink:9092
+    - --node-config
+    - 'partition-id=0 num-partitions=2 node-name="demo"'
+    - --clientappio-api-address=0.0.0.0:9094
+    - --isolation=process
+```
+
+**Important:** `node-name` must match the names in `flower-nodes.yaml` and `pyproject.toml`.
+
+### Quick start
+
 ```bash
 # 1. Build the client app image
 cd examples/quickstart-pytorch
@@ -211,7 +213,7 @@ token-xxx = ""
 You're running in simulation mode which doesn't support `node-name`. Use deployment mode instead (docker-compose).
 
 ### Tokens showing as empty
-Check that node names match across all three files:
+Check that node names match:
 - `flower-nodes.yaml` node names
 - `pyproject.toml` token keys
-- `docker-compose.yml` `node-name` values
+- SuperNode `node-name` (configured in Armadillo UI, or docker-compose for local testing)
