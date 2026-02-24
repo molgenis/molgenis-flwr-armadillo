@@ -675,6 +675,97 @@ data = list_available_data(config_path="flower-nodes.yaml")
 
 ---
 
+## Stage 6: Result Storage in Armadillo
+
+**Goal:** Allow researchers to upload model results (trained models, metrics) to Armadillo and retrieve them later via authenticated access.
+
+### Problem
+
+Currently, Flower saves results to the ServerApp's filesystem (`final_model.pt`, `results.json`). In Docker deployments, these are lost when the container stops. Researchers need a way to persist and retrieve their results.
+
+### Proposed Solution
+
+Store results in Armadillo under a user-specific folder structure:
+
+```
+Project: flower-results
+  users/{email}/
+    {run-id}/
+      final_model.pt
+      results.json
+      run_config.json
+```
+
+### Changes Required
+
+**1. Armadillo: New upload endpoint for results**
+
+```
+POST /storage/projects/{project}/results/{run-id}/{filename}
+Authorization: Bearer <token>
+Content-Type: application/octet-stream
+```
+
+- Authenticated users can upload to their own folder
+- Run ID provides namespacing for multiple runs
+- Returns URL/path for later retrieval
+
+**2. Armadillo: List user's results**
+
+```
+GET /storage/projects/{project}/results
+Authorization: Bearer <token>
+```
+
+Returns list of user's runs with metadata (timestamps, sizes).
+
+**3. Armadillo: Download results**
+
+```
+GET /storage/projects/{project}/results/{run-id}/{filename}
+Authorization: Bearer <token>
+```
+
+Users can only access their own results (or results shared with them).
+
+**4. Python helper: `upload_results()`**
+
+```python
+from molgenis_flwr_armadillo import upload_results
+
+# In server_app.py after training
+upload_results(
+    token=token,
+    run_id=run_id,
+    files={"final_model.pt": model_bytes, "results.json": metrics}
+)
+```
+
+**5. CLI tool: `molgenis-flwr-results`**
+
+```bash
+# List your results
+molgenis-flwr-results --list
+
+# Download a specific run's results
+molgenis-flwr-results --download <run-id> --output ./my-results/
+```
+
+### Access Control
+
+- Users can only see/download their own results by default
+- Admins can access all results
+- Future: sharing mechanism (share results with specific users/groups)
+
+### Done when
+
+- Results can be uploaded from ServerApp to Armadillo
+- Users can list and download their previous runs
+- Results persist beyond container lifecycle
+- Access control enforced (users see only their results)
+
+---
+
 ## Known Risks
 
 1. **Shell escaping**: Long JWT tokens on the command line may cause issues. May need a config file approach.
@@ -691,7 +782,7 @@ data = list_available_data(config_path="flower-nodes.yaml")
 - [x] CLI tool: `molgenis-flwr-authenticate`
 - [x] CLI tool: `molgenis-flwr-run`
 - [x] Token storage/retrieval (`save_tokens`, `load_tokens`)
-- [ ] Helper functions (`extract_tokens`, `get_node_token`)
+- [x] Helper functions (`extract_tokens`, `get_node_token`)
 - [ ] CLI tool: `molgenis-flwr-tables` (list available data)
 - [ ] Helper function: `list_available_data()`
 - [ ] Error handling wrapper for Armadillo requests
@@ -731,6 +822,15 @@ data = list_available_data(config_path="flower-nodes.yaml")
 - [ ] Armadillo: UI extension for container permissions
 - [ ] Armadillo: Migration for existing permissions
 - [ ] Flower: Pass app ID when fetching data
+
+### Stage 6: Result Storage in Armadillo
+- [ ] Armadillo: Upload endpoint for results (`POST /storage/projects/{project}/results/...`)
+- [ ] Armadillo: List results endpoint (`GET /storage/projects/{project}/results`)
+- [ ] Armadillo: Download results endpoint
+- [ ] Armadillo: Access control (users see only their results)
+- [ ] Python helper: `upload_results()` function
+- [ ] CLI tool: `molgenis-flwr-results` (list and download)
+- [ ] ServerApp integration: auto-upload after training
 
 ### Documentation
 - [x] README with usage instructions
