@@ -1,10 +1,9 @@
 """pytorchexample: A Flower / PyTorch app."""
 
-import json
-
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
+from molgenis_flwr_armadillo import get_node_token
 
 from pytorchexample.task import Net, load_data
 from pytorchexample.task import test as test_fn
@@ -18,9 +17,9 @@ app = ClientApp()
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 
-    # Read token based on node name (passed via ConfigRecord from server)
+    # Read token for this node (passed via ConfigRecord from server)
     node_name = context.node_config["node-name"]
-    token = msg.content["config"].get(f"token-{node_name}", "")
+    token = get_node_token(msg, context)
     print(f"[{node_name}] Using token: {token[:50]}..." if token else f"[{node_name}] No token received")
 
     # Load the model and initialize it with the received weights
