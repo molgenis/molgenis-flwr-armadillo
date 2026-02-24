@@ -4,6 +4,7 @@ import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
+from molgenis_flwr_armadillo import extract_tokens
 
 from pytorchexample.task import Net, load_centralized_dataset, test
 
@@ -21,7 +22,7 @@ def main(grid: Grid, context: Context) -> None:
     lr: float = context.run_config["learning-rate"]
 
     # Collect all tokens from run_config to pass to clients
-    tokens = {k: v for k, v in context.run_config.items() if k.startswith("token-")}
+    tokens = extract_tokens(context)
     print(f"Tokens to distribute: {list(tokens.keys())}")
 
     # Load global model
