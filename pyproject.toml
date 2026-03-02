@@ -39,12 +39,26 @@ Source = "https://github.com/molgenis/molgenis-flwr-armadillo"
 [tool.hatch.version]
 path = "src/molgenis_flwr_armadillo/__about__.py"
 
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov=molgenis_flwr_armadillo --cov-report=term-missing {args:tests}"
+
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",
 ]
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/molgenis_flwr_armadillo tests}"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.coverage.run]
 source_pkgs = ["molgenis_flwr_armadillo", "tests"]
