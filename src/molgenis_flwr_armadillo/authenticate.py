@@ -73,6 +73,7 @@ def authenticate(config_path: str) -> dict:
         auth_result = client.device_flow_auth()
 
         tokens[f"token-{node_name}"] = auth_result["access_token"]
+        tokens[f"url-{node_name}"] = url
         console.print(f"  [green]✓ {node_name} authenticated[/green]")
 
     save_tokens(tokens)
