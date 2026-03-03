@@ -50,7 +50,10 @@ def get_node_token(msg: Message, context: Context) -> str:
         context: The Flower Context object
 
     Returns:
-        The token string for this node, or empty string if not found
+        The token string for this node
+
+    Raises:
+        RuntimeError: If node name is not configured or token is missing
 
     Example:
         from molgenis_flwr_armadillo import get_node_token
@@ -62,7 +65,19 @@ def get_node_token(msg: Message, context: Context) -> str:
             # ...
     """
     node_name = context.node_config.get("node-name", "")
-    return msg.content.get("config", {}).get(f"token-{node_name}", "")
+    if not node_name:
+        raise RuntimeError(
+            "No 'node-name' found in node_config. "
+            "Check the supernode --node-config argument includes node-name."
+        )
+    token = msg.content.get("config", {}).get(f"token-{node_name}", "")
+    if not token:
+        raise RuntimeError(
+            f"No token found for node '{node_name}'. "
+            f"Check that run-config includes 'token-{node_name}'. "
+            f"Re-run molgenis-flwr-authenticate if tokens have expired."
+        )
+    return token
 
 
 def get_node_url(msg: Message, context: Context) -> str:
@@ -75,7 +90,10 @@ def get_node_url(msg: Message, context: Context) -> str:
         context: The Flower Context object
 
     Returns:
-        The Armadillo URL for this node, or empty string if not found
+        The Armadillo URL for this node
+
+    Raises:
+        RuntimeError: If node name is not configured or URL is missing
 
     Example:
         from molgenis_flwr_armadillo import get_node_url
@@ -85,7 +103,150 @@ def get_node_url(msg: Message, context: Context) -> str:
             url = get_node_url(msg, context)
     """
     node_name = context.node_config.get("node-name", "")
-    return msg.content.get("config", {}).get(f"url-{node_name}", "")
+    if not node_name:
+        raise RuntimeError(
+            "No 'node-name' found in node_config. "
+            "Check the supernode --node-config argument includes node-name."
+        )
+    url = msg.content.get("config", {}).get(f"url-{node_name}", "")
+    if not url:
+        raise RuntimeError(
+            f"No URL found for node '{node_name}'. "
+            f"Check that run-config includes 'url-{node_name}'."
+        )
+    return url
+
+
+def _auth_headers(token: str) -> dict:
+    """Build authorization headers."""
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _request(method: str, url: str, token: str, path: str, **kwargs):
+    """Make an authenticated request to Armadillo with error handling."""
+    endpoint = f"{url.rstrip('/')}{path}"
+    try:
+        response = requests.request(
+            method, endpoint, headers=_auth_headers(token), **kwargs
+        )
+        response.raise_for_status()
+        return response
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
+        if status == 401:
+            raise RuntimeError(
+                f"Authentication failed (HTTP 401) from {endpoint}. "
+                f"The OIDC token may have expired. "
+                f"Re-run molgenis-flwr-authenticate to get a new token."
+            ) from e
+        elif status == 403:
+            raise RuntimeError(
+                f"Access denied (HTTP 403) from {endpoint}. "
+                f"The authenticated user does not have permission to access "
+                f"this resource. Check project permissions in Armadillo."
+            ) from e
+        elif status == 404:
+            raise RuntimeError(
+                f"Not found (HTTP 404) from {endpoint}. "
+                f"The project or resource may not exist."
+            ) from e
+        else:
+            raise RuntimeError(f"HTTP {status} from {endpoint}: {e}") from e
+    except requests.exceptions.ConnectionError as e:
+        raise RuntimeError(
+            f"Could not connect to Armadillo at {endpoint}. "
+            f"Check that the server is running and the URL is correct."
+        ) from e
+
+
+def list_projects(url: str, token: str) -> list[str]:
+    """List projects the authenticated user has access to.
+
+    Calls GET /my/projects on Armadillo.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+
+    Returns:
+        List of project names the user can access
+
+    Example:
+        from molgenis_flwr_armadillo import list_projects
+
+        projects = list_projects("http://localhost:8080", token)
+        print(projects)  # ["project-a", "project-b"]
+    """
+    response = _request("GET", url, token, "/my/projects")
+    return response.json()
+
+
+def list_resources(url: str, token: str, project: str) -> list[str]:
+    """List resources (objects) in a project the user has access to.
+
+    Calls GET /storage/projects/{project}/objects on Armadillo.
+    Equivalent to datashield.tables() for Flower projects.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+        project: Armadillo project name
+
+    Returns:
+        List of resource paths in the project
+
+    Raises:
+        RuntimeError: If the user does not have access or the project
+            does not exist
+
+    Example:
+        from molgenis_flwr_armadillo import list_resources
+
+        resources = list_resources("http://localhost:8080", token, "my-project")
+        print(resources)  # ["data/train.pt", "data/test.pt"]
+    """
+    response = _request("GET", url, token, f"/storage/projects/{project}/objects")
+    return response.json()
+
+
+def check_access(url: str, token: str, project: str, resources: list[str] = None):
+    """Verify the user has access to a project and its resources.
+
+    Checks that the project is accessible and optionally that specific
+    resources exist. Raises RuntimeError with a clear message on failure.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+        project: Armadillo project name
+        resources: Optional list of resource paths to verify exist
+
+    Raises:
+        RuntimeError: If the user cannot access the project or resources
+            are missing
+
+    Example:
+        from molgenis_flwr_armadillo import check_access
+
+        # Verify access before starting training
+        check_access(url, token, "my-project", ["data/train.pt", "data/test.pt"])
+    """
+    projects = list_projects(url, token)
+    if project not in projects:
+        raise RuntimeError(
+            f"User does not have access to project '{project}' on {url}. "
+            f"Available projects: {projects}. "
+            f"Grant access in Armadillo via POST /access/permissions."
+        )
+
+    if resources:
+        available = list_resources(url, token, project)
+        missing = [r for r in resources if r not in available]
+        if missing:
+            raise RuntimeError(
+                f"Resources not found in project '{project}' on {url}: {missing}. "
+                f"Available resources: {available}"
+            )
 
 
 def load_data(url: str, token: str, project: str, resource: str) -> bytes:
@@ -117,16 +278,14 @@ def load_data(url: str, token: str, project: str, resource: str) -> bytes:
     if not CONTAINER_NAME:
         raise RuntimeError("ARMADILLO_CONTAINER_NAME environment variable not set")
 
-    response = requests.post(
-        f"{url.rstrip('/')}/flower/push-data",
-        headers={"Authorization": f"Bearer {token}"},
+    _request(
+        "POST", url, token, "/flower/push-data",
         json={
             "project": project,
             "resource": resource,
             "containerName": CONTAINER_NAME,
         },
     )
-    response.raise_for_status()
 
     filename = project + "_" + resource.replace("/", "_")
     filepath = DATA_DIR / filename

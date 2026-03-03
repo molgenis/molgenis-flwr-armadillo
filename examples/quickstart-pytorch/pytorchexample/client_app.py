@@ -17,6 +17,36 @@ app = ClientApp()
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 
+    Login
+    assign.expr in python.
+
+    DSI for flower
+    Python part of armadillo
+
+    "flowerproject/data/cifar"
+
+    When assign-resource method is done, token is generated and put in resource file.
+    Rexecservice.impl load_resources
+
+    Secret is per resource file
+
+    Internal token created when resource is assigned
+
+    Get internal from OIDC token
+
+
+    get request
+    "rawfiles/flowerproject/data%2Fcifar"
+    auth_header with internal token
+
+
+    oidc_token <- extract_token()
+
+
+    Get: token_exchange endpoint
+    Get: rawfiles with this token
+
+
     # Read token for this node (passed via ConfigRecord from server)
     node_name = context.node_config["node-name"]
     token = get_node_token(msg, context)
