@@ -358,6 +358,64 @@ Client-side clipping on model parameters. Clients clip updates before sending, s
 
 Extend Armadillo's permission model so users have access to specific containers, not just projects. Currently `User → Project → [all containers]`, target is `User → Project → Container(s)`.
 
+#### Why Per-Container Matters
+
+**Reusable across DataSHIELD and Flower.** Container-level permissions are not Flower-specific — they apply equally to DataSHIELD profiles. Currently any researcher with project access can select any DataSHIELD profile (`POST /select-profile` has no container authorization) and any Flower container (`POST /flower/push-data` checks the project but not the container name). Per-container permissions close this gap for both.
+
+**Controls whether a researcher can use Flower at all.** A Flower supernode is a container. If a researcher doesn't have permission for any Flower container, they effectively can't use Flower on that Armadillo instance — even if they have project access. This gives admins a clean way to enable or disable Flower for specific researchers without changing project permissions.
+
+#### Enforcement Points
+
+Both DataSHIELD and Flower already pass the container name through their request path, so enforcement requires minimal plumbing:
+
+| Use case | Where enforced | Current check | Added check |
+|----------|---------------|---------------|-------------|
+| DataSHIELD profile selection | `DataController.selectContainer()` | Authenticated user only | + `ROLE_{PROJECT}_{CONTAINER}_USER` or service-level check |
+| Flower data push | `FlowerDataService.pushData()` | `ROLE_{PROJECT}_RESEARCHER` | + user has permission for `containerName` |
+
+**Implementation options:**
+
+1. **Role-based (Spring Security).** Extend `getAuthoritiesForEmail()` in `AccessService` to emit `ROLE_{PROJECT}_{CONTAINER}_RESEARCHER` roles. Enforcement via `@PreAuthorize`. Clean but produces many roles in multi-container setups.
+
+2. **Service-level check (simpler).** Add a `ContainerPermissionService` that checks a permissions set, called explicitly from the controller/service methods. Avoids role proliferation and is easier to reason about. Follows the same pattern as `AccessService.getPermissionsForEmail()`.
+
+Option 2 is likely better — it keeps the role model simple (`ROLE_SU` + `ROLE_{PROJECT}_RESEARCHER`) and adds container checks as an additional layer.
+
+#### Container Self-Identification Vulnerability
+
+**Problem:** The current `POST /flower/push-data` endpoint trusts the `containerName` field in the request body. The clientapp reads `ARMADILLO_CONTAINER_NAME` from its own environment and sends it to Armadillo. But a malicious FAB running inside the container could send a different container name, bypassing per-container permissions or pushing data into another container.
+
+**Fix: Server-side container identity resolution.** Remove `containerName` from the request body entirely. Instead, Armadillo resolves the calling container from the source IP of the HTTP request.
+
+**How it works:**
+
+1. The clientapp calls `POST /flower/push-data` with only `project` and `resource` (no `containerName`)
+2. `FlowerController.pushData()` reads the source IP from `HttpServletRequest.getRemoteAddr()`
+3. Armadillo resolves the IP to a container name by inspecting the Docker network:
+   ```java
+   // Docker Java API equivalent of: docker network inspect flower-network
+   dockerClient.inspectNetworkCmd()
+       .withNetworkId("flower-network")
+       .exec()
+       .getContainers()  // Map<String, ContainerNetworkConfig>
+       // find the entry whose IPv4Address matches remoteAddr
+   ```
+4. If no container matches the source IP → 403 Forbidden (request didn't come from a managed container)
+5. The resolved container name is used for the `docker exec` push and for per-container permission checks
+
+**Changes required:**
+
+| Component | Change |
+|-----------|--------|
+| `PushDataRequest` | Remove `containerName` field |
+| `FlowerController.pushData()` | Inject `HttpServletRequest`, pass `request.getRemoteAddr()` to service |
+| `FlowerDataService.pushData()` | Accept source IP instead of container name, resolve via Docker API |
+| `FlowerDockerService` | New method: `resolveContainerByIp(String networkName, String ip)` |
+| `helpers.py` (`load_data()`) | Remove `containerName` from the request body, remove `ARMADILLO_CONTAINER_NAME` env var dependency |
+| `DockerService.configureEnv()` | No longer needs to set `ARMADILLO_CONTAINER_NAME` |
+
+**Why this is reliable:** Flower containers already run on a dedicated Docker bridge network (`flower-network`). On a bridge network, each container gets a stable IP that's visible to Armadillo via the Docker API. The IP→container mapping is authoritative — Docker manages it, not the container.
+
 ### Stage 7: Result Storage
 
 Allow researchers to upload model results to Armadillo and retrieve them later.
@@ -439,8 +497,116 @@ This reuses existing Spring Security, storage service, and Docker client infrast
 ### Stage 5: Differential Privacy
 - [ ] DP strategy wrapper + client clipping
 
-### Stage 6: Per-Container Permissions
-- [ ] Permission model, authorization, API, UI, migration
+
+### Stage 6: Per-User, Per-Project, Per-Container, Per-App Permissions
+
+Extend Armadillo's permission model to support fine-grained Flower authorization. Currently permissions are `User → Project` (a researcher can access all data in a project). The target is `User → Project → App → Container`, so admins control exactly which researchers can run which approved apps on which nodes.
+
+#### Data Model
+
+**FlowerApp** — a registered Flower application (managed by admin/data steward):
+- `name` — human-readable identifier (e.g. "pytorch-cifar10-v2")
+- `signingKeyId` — derived key ID (e.g. `fpk_3a7b9c2d`), links to Stage 4C trusted key
+- `fabHash` — optional SHA-256 of the approved FAB content, for hash-based verification as an alternative to key-based signing
+- `description` — what the app computes
+- `createdAt` — timestamp
+
+**FlowerAppPermission** — extends the existing permission model:
+- `email` — researcher
+- `project` — which project's data the app can access
+- `appName` — which registered FlowerApp
+- `containerName` — optional, restricts to specific supernode(s). If null, app can run on any supernode in the project.
+
+This follows the same pattern as `ProjectPermission` (email + project), adding app and container dimensions.
+
+#### How It Fits Into the Existing Auth Flow
+
+Current auth check (data loading):
+```
+ClientApp calls POST /flower/push-data with OIDC token
+  → Spring Security validates token
+  → @PreAuthorize checks ROLE_{PROJECT}_RESEARCHER
+  → Data pushed into container
+```
+
+Extended auth check:
+```
+ClientApp calls POST /flower/push-data with OIDC token + app metadata
+  → Spring Security validates token
+  → Check: does this user have FlowerAppPermission for (project, app, container)?
+  → If yes: data pushed into container
+  → If no: 403 Forbidden
+```
+
+The FAB's identity (app name or hash) would need to be available at data-load time. Options:
+1. The supernode sets an env var (e.g. `FLOWER_APP_NAME`) when it verifies and accepts a FAB, which `load_data()` includes in the push-data request
+2. The run_config includes the app name, set by the researcher or by `molgenis-flwr-run`
+
+#### Supernode Integration
+
+The supernode currently checks FAB signatures against a local trusted-entities file. With registered FlowerApps in Armadillo:
+
+1. At startup, supernode calls `GET /flower/trusted-keys` (Stage 4C) to fetch trusted signing keys
+2. On FAB verification, supernode can additionally call `GET /flower/apps/{keyId}` to resolve which app this FAB belongs to
+3. The app identity propagates to the clientapp environment for the data-load auth check
+
+This means the supernode doesn't need any local configuration beyond the Armadillo URL — all trust decisions are centralized in Armadillo.
+
+#### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/flower/apps` | List registered Flower apps |
+| `POST` | `/flower/apps` | Register a new app (name, signing key, optional FAB hash) |
+| `PUT` | `/flower/apps/{name}` | Update app (e.g. new FAB hash for a new version) |
+| `DELETE` | `/flower/apps/{name}` | Remove an app |
+| `GET` | `/flower/apps/{name}/permissions` | List permissions for an app |
+| `POST` | `/flower/apps/{name}/permissions` | Grant: user + project + optional container |
+| `DELETE` | `/flower/apps/{name}/permissions/{id}` | Revoke a permission |
+
+These follow the same patterns as the existing `/access/` endpoints.
+
+#### UI
+
+Admin page "Flower Apps" (same pattern as Profiles page):
+- List view: registered apps with name, signing key, description
+- Detail view: permissions table (user × project × container)
+- Add/edit/delete actions
+
+#### Storage
+
+New JSON config file (e.g. `flower-apps.json`) following the same pattern as `access.json`:
+```json
+{
+  "apps": {
+    "pytorch-cifar10-v2": {
+      "signingKeyId": "fpk_3a7b9c2d",
+      "fabHash": "sha256:abc123...",
+      "description": "CIFAR-10 federated training with PyTorch",
+      "createdAt": "2026-03-01T12:00:00Z"
+    }
+  },
+  "permissions": [
+    {
+      "email": "researcher@institution.org",
+      "project": "test-flower",
+      "appName": "pytorch-cifar10-v2",
+      "containerName": null
+    }
+  ]
+}
+```
+
+#### Checklist
+
+- [ ] `FlowerApp` model and `FlowerAppPermission` model
+- [ ] `FlowerAppService` (CRUD + permission management)
+- [ ] Storage: `flower-apps.json` loader/saver
+- [ ] REST endpoints for app and permission management
+- [ ] Extend `POST /flower/push-data` to check app-level permissions
+- [ ] Supernode: resolve app identity from FAB signing key
+- [ ] Admin UI: Flower Apps page
+- [ ] Migration: existing setups continue to work without app permissions (backwards-compatible)
 
 ### Stage 7: Result Storage
 - [ ] Upload/download/list endpoints + CLI tool
