@@ -136,29 +136,219 @@ New `POST /flower/push-data` endpoint. Reuses existing auth, storage, and Docker
 
 `load_data(context)` helper and updated example app. End-to-end test: authenticate → submit job → data pushed → model trained.
 
-### Stage 4: FAB Signing + Trusted Key Management
+### Stage 4: FAB Review and Signing Workflow
 
-Flower Application Bundles (FABs) are digitally signed by data stewards so that verified supernodes can reject unsigned or untrusted code before execution.
+Flower FABs contain arbitrary Python that executes on nodes with access to data. Flower has no local FAB signing — their signing is coupled to their hosted Platform. We've built `molgenis-flwr-sign`, `molgenis-flwr-keygen`, and `supernode_verify.py` to fill this gap. This stage adds the **workflow** around these tools, inspired by vantage6's algorithm store (multi-reviewer approval before algorithms run on nodes).
 
 **Signing side (molgenis-flwr-armadillo) — already implemented:**
 - `molgenis-flwr-keygen` — generates Ed25519 keypair
 - `molgenis-flwr-sign` — signs a Flower app into a `.sfab` file
+- `molgenis-flwr-run` — submits a signed FAB to a SuperLink
 - `supernode_verify.py` — verified supernode wrapper that patches Flower to reject unsigned FABs
 
-**Trusted key management (Armadillo) — to build:**
+#### Stage 4A: PoC (Manual Signing)
 
-In production, Armadillo manages which signing keys are trusted. The flow:
+Everything done by hand using the existing CLI tools. No new code — just documentation and an end-to-end test proving the chain works.
 
-1. Data steward generates a keypair and shares their public key with the server admin
-2. Admin uploads the public key to Armadillo via API or UI
-3. Armadillo stores the key (with its derived key ID) alongside other config
-4. When starting a verified supernode, Armadillo generates `trusted-entities.yaml` from all registered keys and mounts it into the container
+**Workflow:**
 
-Armadillo changes needed:
-- Storage for trusted signing keys (e.g. a JSON file similar to `access.json`, or a new config section)
-- API endpoints to add/remove/list trusted keys (`POST /flower/trusted-keys`, `DELETE /flower/trusted-keys/{keyId}`, `GET /flower/trusted-keys`)
-- UI page to manage trusted keys
-- Container startup logic: generate `trusted-entities.yaml` from stored keys and mount it into verified supernode containers
+```
+Researcher               Data manager(s)              Node operator
+    |                          |                            |
+    | 1. Writes Flower app     |                            |
+    |    (client_app.py etc)   |                            |
+    |                          |                            |
+    | 2. Sends app directory   |                            |
+    |    (zip/tar/git) ------->|                            |
+    |                          |                            |
+    |              3. Reviews code manually                  |
+    |              4. If approved:                           |
+    |                 molgenis-flwr-sign \                   |
+    |                   --app-dir <app> \                    |
+    |                   --private-key consortium.key \       |
+    |                   --output study.sfab                  |
+    |                          |                            |
+    | 5. Receives .sfab <------|                            |
+    |                          |                            |
+    | 6. molgenis-flwr-run \   |                            |
+    |      --signed-fab study.sfab \                        |
+    |      --federation-address host:9093                   |
+    |                          |                            |
+    |                          |    (SuperNode verifies     |
+    |                          |     signature, runs FAB)   |
+```
+
+**Setup (one-time):**
+1. Generate consortium keypair: `molgenis-flwr-keygen --name consortium`
+2. Configure each SuperNode with `trusted-entities.yaml` containing the public key
+3. Deploy `molgenis/verified-supernode` image instead of `flwr/supernode`
+
+**Deliverables:**
+- Documentation: guide explaining the manual workflow
+- E2E test: extend `test-flower-containers.sh` to cover signing scenarios
+
+**Limitations:**
+- Data manager must manually receive, review, and sign each app
+- Private key lives on the data manager's laptop
+- No structured review process — just "someone looked at it"
+- Public key distribution to nodes is manual
+- Multi-institution approval is informal (no enforced policy)
+
+#### Stage 4B: GitHub Review + CI Signing (`molgenis-flwr-apps` repo)
+
+Automates the manual workflow with a GitHub-based review process and CI signing. A new repo where researchers submit code as PRs. CI signs on merge after multi-institution approval.
+
+**Repo structure:**
+
+```
+molgenis-flwr-apps/
+├── .github/
+│   ├── workflows/
+│   │   ├── review.yml          # PR: lint + build check
+│   │   └── sign.yml            # post-merge: sign + release
+│   ├── CODEOWNERS              # require approval from each institution
+│   └── PULL_REQUEST_TEMPLATE.md
+├── public-keys/
+│   └── consortium.pub
+├── apps/
+│   └── <study-name>/
+│       ├── pyproject.toml
+│       ├── STUDY_INFO.md
+│       └── <app_package>/
+│           ├── __init__.py
+│           ├── client_app.py
+│           └── server_app.py
+├── CONTRIBUTING.md
+└── README.md
+```
+
+**CODEOWNERS — multi-institution approval:**
+
+```
+apps/ @org/institution-a @org/institution-b @org/institution-c ...
+```
+
+Combined with branch protection: "Require review from Code Owners" + required approvals matching the number of institutions.
+
+**review.yml — build check on PR:**
+
+Triggered on PRs to `main` touching `apps/**`:
+1. Checks `pyproject.toml` and `STUDY_INFO.md` exist
+2. Checks app size < 10MB
+3. Lints with ruff
+4. Builds FAB (dry run, no signing) to verify it's well-formed
+
+**sign.yml — sign on merge:**
+
+Triggered on push to `main` touching `apps/**`. Runs in a protected GitHub Environment (`signing`) which requires manual deployment approval and holds the `FAB_SIGNING_KEY` secret.
+
+1. Detect which study directories changed
+2. Write signing key from secret to temp file
+3. `molgenis-flwr-sign --app-dir <dir> --private-key <key> --output <name>.sfab`
+4. Shred key file (`always()` step)
+5. Create GitHub Release with `.sfab` attached
+6. Post commit comment with download link
+
+**Researcher gets the signed FAB:**
+- GitHub Release notification (researcher watches the repo)
+- Commit comment with direct link
+- Downloads `.sfab`, runs `molgenis-flwr-run --signed-fab study.sfab --federation-address <host:port>`
+
+**PR template:**
+
+```markdown
+## Study Information
+- **Study name:**
+- **PI:**
+- **Institution:**
+- **Armadillo project:**
+- **Resource(s) accessed:**
+
+## What does this app compute?
+
+## Checklist
+- [ ] STUDY_INFO.md is present and complete
+- [ ] App uses load_data(context) from molgenis_flwr_armadillo.helpers
+- [ ] No hardcoded file paths or direct filesystem access
+- [ ] pyproject.toml version incremented from any prior submission
+- [ ] Dependencies are necessary and minimal
+```
+
+**GitHub setup (one-time):**
+1. Create `molgenis-flwr-apps` repo
+2. Consortium lead generates keypair: `molgenis-flwr-keygen --name consortium`
+3. Commit `consortium.pub` to `public-keys/`
+4. Create GitHub Environment `signing` with required reviewer + secret `FAB_SIGNING_KEY`
+5. Configure branch protection on `main` (require approvals, CODEOWNERS, status checks)
+6. Create GitHub teams per institution, add data managers
+7. Add researchers as collaborators with Write access
+
+#### Stage 4C: Armadillo Trusted Key API (`molgenis-service-armadillo`)
+
+Eliminates manual key distribution to nodes. Data managers upload public keys through the Armadillo admin UI.
+
+**New endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/flower/trusted-keys` | Upload a public key (PEM body + optional label) |
+| `GET` | `/flower/trusted-keys` | List registered keys (key_id, label, created_at) |
+| `DELETE` | `/flower/trusted-keys/{keyId}` | Remove a key |
+
+**Storage:** JSON file similar to `access.json`, or a new config section. Each entry stores:
+- `keyId` — derived from `derive_key_id(public_key)` (e.g. `fpk_3a7b9c2d`)
+- `publicKeyPem` — PEM-encoded Ed25519 public key
+- `label` — human-readable name (e.g. "consortium-2025")
+- `createdAt` — timestamp
+
+**UI:** Admin page to manage trusted keys — same pattern as DataSHIELD profile management. List view with add/delete actions.
+
+**SuperNode startup integration:**
+
+When Armadillo starts a verified SuperNode container, it:
+1. Reads all registered trusted keys from storage
+2. Generates `trusted-entities.yaml` (YAML: `{key_id: pem_string, ...}`)
+3. Mounts it into the container at `/config/trusted-entities.yaml`
+
+This replaces the manual `trusted-entities.yaml` creation from Stage 4A.
+
+**Full chain (Stage 4B + 4C combined):**
+
+```
+Consortium lead                 GitHub                  Each institution
+      |                            |                          |
+      | molgenis-flwr-keygen       |                          |
+      | → consortium.key, .pub     |                          |
+      |                            |                          |
+      | private key -------------->| (Environment secret)     |
+      | commits public key ------->| (public-keys/)           |
+      |                            |                          |
+      |                            |  admin downloads .pub    |
+      |                            |------------------------->|
+      |                            |                          |
+      |                            |  POST /flower/trusted-keys
+      |                            |  (uploads via Armadillo UI)
+      |                            |                          |
+      |                            |  Armadillo auto-generates|
+      |                            |  trusted-entities.yaml   |
+      |                            |  into verified SuperNode |
+
+Researcher                     GitHub                  SuperNode
+      |                            |                       |
+      | opens PR with app code --->|                       |
+      |                            | review.yml runs       |
+      |    all institutions approve PR                     |
+      |                            | PR merged             |
+      |                            | sign.yml runs         |
+      |                            |  (env approval)       |
+      |                            |  signs FAB            |
+      |                            |  creates Release      |
+      | downloads .sfab <----------|                       |
+      |                            |                       |
+      | molgenis-flwr-run ---------|---------------------->|
+      |   --signed-fab study.sfab  |   verifies signature  |
+      |                            |   runs FAB            |
+```
 
 ### Stage 5: Differential Privacy
 
@@ -220,14 +410,31 @@ This reuses existing Spring Security, storage service, and Docker client infrast
 - [ ] Example app updated
 - [ ] End-to-end verified
 
-### Stage 4: FAB Signing + Trusted Key Management
+### Stage 4A: FAB Signing PoC (Manual)
 - [x] `molgenis-flwr-keygen` CLI
 - [x] `molgenis-flwr-sign` CLI
+- [x] `molgenis-flwr-run` CLI (signed FAB submission)
 - [x] Verified supernode wrapper (`supernode_verify.py`)
-- [ ] Armadillo: trusted key storage
-- [ ] Armadillo: API endpoints for key management
-- [ ] Armadillo: UI for key management
-- [ ] Armadillo: auto-generate `trusted-entities.yaml` on supernode startup
+- [ ] Documentation: manual signing workflow guide
+- [ ] E2E test: `test-flower-containers.sh`
+- [ ] Docker Compose: verified supernode setup
+
+### Stage 4B: GitHub Review + CI Signing (`molgenis-flwr-apps`)
+- [ ] Create `molgenis-flwr-apps` repo with apps/ structure
+- [ ] `review.yml` workflow (lint + build check on PR)
+- [ ] `sign.yml` workflow (sign + release on merge)
+- [ ] CODEOWNERS with multi-institution approval
+- [ ] PR template with study info checklist
+- [ ] GitHub Environment `signing` with `FAB_SIGNING_KEY` secret
+- [ ] Branch protection rules on `main`
+
+### Stage 4C: Armadillo Trusted Key API (`molgenis-service-armadillo`)
+- [ ] Trusted key storage (JSON config)
+- [ ] `POST /flower/trusted-keys` endpoint
+- [ ] `GET /flower/trusted-keys` endpoint
+- [ ] `DELETE /flower/trusted-keys/{keyId}` endpoint
+- [ ] Admin UI for key management
+- [ ] Auto-generate `trusted-entities.yaml` on verified SuperNode startup
 
 ### Stage 5: Differential Privacy
 - [ ] DP strategy wrapper + client clipping
@@ -237,6 +444,18 @@ This reuses existing Spring Security, storage service, and Docker client infrast
 
 ### Stage 7: Result Storage
 - [ ] Upload/download/list endpoints + CLI tool
+
+---
+
+## Existing Code Reused (no changes needed)
+
+| File | Used in |
+|------|---------|
+| `sign_cli.py` (`molgenis-flwr-sign`) | Stage 4A manual, Stage 4B CI |
+| `keygen.py` (`molgenis-flwr-keygen`) | Stage 4A + 4B key generation |
+| `signing.py` (`sign_fab`, `derive_key_id`) | Core crypto |
+| `run.py` (`molgenis-flwr-run`) | Stage 4A + 4B FAB submission |
+| `supernode_verify.py` | Node-side verification |
 
 ---
 
