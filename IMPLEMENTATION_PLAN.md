@@ -136,15 +136,39 @@ New `POST /flower/push-data` endpoint. Reuses existing auth, storage, and Docker
 
 `load_data(context)` helper and updated example app. End-to-end test: authenticate → submit job → data pushed → model trained.
 
-### Stage 4: Differential Privacy
+### Stage 4: FAB Signing + Trusted Key Management
+
+Flower Application Bundles (FABs) are digitally signed by data stewards so that verified supernodes can reject unsigned or untrusted code before execution.
+
+**Signing side (molgenis-flwr-armadillo) — already implemented:**
+- `molgenis-flwr-keygen` — generates Ed25519 keypair
+- `molgenis-flwr-sign` — signs a Flower app into a `.sfab` file
+- `supernode_verify.py` — verified supernode wrapper that patches Flower to reject unsigned FABs
+
+**Trusted key management (Armadillo) — to build:**
+
+In production, Armadillo manages which signing keys are trusted. The flow:
+
+1. Data steward generates a keypair and shares their public key with the server admin
+2. Admin uploads the public key to Armadillo via API or UI
+3. Armadillo stores the key (with its derived key ID) alongside other config
+4. When starting a verified supernode, Armadillo generates `trusted-entities.yaml` from all registered keys and mounts it into the container
+
+Armadillo changes needed:
+- Storage for trusted signing keys (e.g. a JSON file similar to `access.json`, or a new config section)
+- API endpoints to add/remove/list trusted keys (`POST /flower/trusted-keys`, `DELETE /flower/trusted-keys/{keyId}`, `GET /flower/trusted-keys`)
+- UI page to manage trusted keys
+- Container startup logic: generate `trusted-entities.yaml` from stored keys and mount it into verified supernode containers
+
+### Stage 5: Differential Privacy
 
 Client-side clipping on model parameters. Clients clip updates before sending, server adds noise after aggregation.
 
-### Stage 5: Per-Container Permissions
+### Stage 6: Per-Container Permissions
 
 Extend Armadillo's permission model so users have access to specific containers, not just projects. Currently `User → Project → [all containers]`, target is `User → Project → Container(s)`.
 
-### Stage 6: Result Storage
+### Stage 7: Result Storage
 
 Allow researchers to upload model results to Armadillo and retrieve them later.
 
@@ -196,13 +220,22 @@ This reuses existing Spring Security, storage service, and Docker client infrast
 - [ ] Example app updated
 - [ ] End-to-end verified
 
-### Stage 4: Differential Privacy
+### Stage 4: FAB Signing + Trusted Key Management
+- [x] `molgenis-flwr-keygen` CLI
+- [x] `molgenis-flwr-sign` CLI
+- [x] Verified supernode wrapper (`supernode_verify.py`)
+- [ ] Armadillo: trusted key storage
+- [ ] Armadillo: API endpoints for key management
+- [ ] Armadillo: UI for key management
+- [ ] Armadillo: auto-generate `trusted-entities.yaml` on supernode startup
+
+### Stage 5: Differential Privacy
 - [ ] DP strategy wrapper + client clipping
 
-### Stage 5: Per-Container Permissions
+### Stage 6: Per-Container Permissions
 - [ ] Permission model, authorization, API, UI, migration
 
-### Stage 6: Result Storage
+### Stage 7: Result Storage
 - [ ] Upload/download/list endpoints + CLI tool
 
 ---
