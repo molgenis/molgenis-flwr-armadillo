@@ -1,777 +1,176 @@
-# Flower + Armadillo Integration: Staged Implementation Plan
+# Flower + Armadillo: Implementation Plan
 
-## Context
+## Overview
 
-We need to enable Flower federated learning clients (running in Docker) to access training data stored in MOLGENIS Armadillo, with proper authentication. The work is split into four sequential stages — each is completed and verified before moving to the next.
+This document describes how Flower federated learning integrates with MOLGENIS Armadillo for secure data access. The design mirrors the existing DataSHIELD `assign.table` pattern: authenticated requests, server-side data push into the container, and immediate file deletion after loading into memory.
+
+The key principle: **Armadillo pushes data into the container** (via `docker exec`). The container never pulls data from Armadillo. This is the same approach DataSHIELD uses with Rserve.
 
 **Repositories:**
-- Flower quickstart (prototyping): `/Users/timcadman/git-repos/flower/quickstart-pytorch/`
-- Armadillo: `/Users/timcadman/git-repos/molgenis/molgenis-service-armadillo/` — work on branch `epic/flower`
-- Python wrapper packages: `https://github.com/molgenis/molgenis-flwr-armadillo` — branch `epic/flower`, PRs go into that branch
-
-**Branching:**
-- Any Armadillo Java changes (e.g., new endpoints in Stage 3) are developed on `epic/flower` in `molgenis-service-armadillo`
-- All Python work (Flower app, setup scripts, token retrieval, client utilities) lives in `molgenis-flwr-armadillo` on branch `epic/flower`
-- The Flower app itself (based on the quickstart-pytorch example) will be copied into `molgenis-flwr-armadillo` so everything is in one place
+- **molgenis-service-armadillo** — Java changes (endpoint, docker exec push, security)
+- **molgenis-flwr-armadillo** — Python package (CLI tools, helper functions, example apps)
 
 ---
 
-## Stage 1: Realistic Data Split + Token String Routing POC
+## DataSHIELD vs Flower: Side-by-Side
 
-**Goal:** (a) Modify the example so each node holds a distinct, predetermined portion of CIFAR-10 (first half / second half) rather than a random IID split, and (b) pass fake token strings via `flwr run --run-config` and verify each client receives its correct token.
+| Step | DataSHIELD (assign.table) | Flower (push-data) |
+|------|---------------------------|----------------------|
+| **1. Researcher authenticates** | Gets OIDC token | Gets OIDC token |
+| **2. Researcher triggers** | `datashield.assign.table()` | Submits Flower job with token, project, and resource in run_config |
+| **3. Job arrives** | DSI sends HTTP to Armadillo | Flower delivers run_config to ClientApp |
+| **4. HTTP request to Armadillo** | DSI calls `POST /load-table` | ClientApp calls `POST /flower/push-data` |
+| **5. Auth** | Spring Security + `ROLE_<PROJECT>_RESEARCHER` | Spring Security + `ROLE_<PROJECT>_RESEARCHER` |
+| **6. Read from storage** | `armadilloStorage.loadTable()` | `armadilloStorage.loadObject()` |
+| **7. Data push** | Rserve `writeFile()` | `docker exec cat >` into container |
+| **8. Load into memory** | R reads file internally | `load_data()` reads file into bytes |
+| **9. File deleted** | `base::unlink()` | `filepath.unlink()` inside `load_data()` |
+| **10. Code execution** | DataSHIELD functions (file gone) | `model.fit(df)` (file gone) |
+| **11. Process ends** | R session ends, container stops | ClientApp exits, container stops |
 
-### Changes
+### File Lifetime — Identical Pattern
 
-**1. `pyproject.toml`** — add token placeholder config keys:
-```toml
-[tool.flwr.app.config]
-# ... existing keys ...
-token-0 = ""
-token-1 = ""
+```
+DataSHIELD:
+──────────────────────────────────────────────────────────────────►
+     │         │         │
+   Write     Load    Delete                      Researcher code
+     │         │         │                              │
+     └────┬────┴────┬────┘                              │
+      File exists   └──── Data in memory only ──────────┘
+
+
+Flower:
+──────────────────────────────────────────────────────────────────►
+     │       │       │       │
+   Write   Read   Delete   Parse                  Researcher code
+           bytes          bytes                         │
+     │       │       │       │                          │
+     └───┬───┴───┬───┘       └── Data in memory only ───┘
+     File exists
 ```
 
-**2. `pytorchexample/task.py`** — replace the IID partitioning with a sequential split:
-- Currently uses `FederatedDataset` with `IidPartitioner` (random sampling)
-- Change to a deterministic sequential split: partition 0 gets the first half of the training data, partition 1 gets the second half
-- This better represents a real scenario where each institution holds its own distinct data
-
-**3. `pytorchexample/client_app.py`** — extract and log the token in both `train()` and `evaluate()`:
-```python
-partition_id = context.node_config["partition-id"]
-token_key = f"token-{partition_id}"
-my_token = context.run_config.get(token_key, "")
-print(f"[Client {partition_id}] Received token: '{my_token}'")
-```
-
-No changes to `server_app.py`.
-
-### Verification
-```bash
-flwr run . --run-config "token-0=fake-token-node-0 token-1=fake-token-node-1"
-```
-- Each client logs the correct token for its partition ID
-- Training still works with the sequential split (accuracy may differ slightly from IID)
-
-### Done when
-- Data is split deterministically (not randomly) and each node has a distinct portion
-- Each simulated client prints the token that corresponds to its partition ID
+In both cases, the file is deleted immediately after loading into memory, before the researcher's code runs.
 
 ---
 
-## Stage 2: Armadillo Data Access via Objects Endpoint
+## Request Flow
 
-**Goal:** Store CIFAR-10 partitions in Armadillo and have Flower clients download their partition via the objects endpoint (`GET /storage/projects/{project}/objects/{object}`) with admin basic auth.
-
-### Changes
-
-**1. `pyproject.toml`** — add `requests` dependency and Armadillo config:
-```toml
-dependencies = [
-    # ... existing ...
-    "requests>=2.31.0",
-]
-
-[tool.flwr.app.config]
-# ... existing + stage 1 keys ...
-armadillo-url = ""
-armadillo-project = "cifar10"
-armadillo-user = "admin"
-armadillo-pass = "admin"
 ```
+1. User authenticates (OIDC) and submits a Flower job
 
-**2. New file: `scripts/setup_armadillo_data.py`** — setup script that:
-- Downloads CIFAR-10 via `FederatedDataset` (same as current `task.py`)
-- Partitions into N partitions, splits 80/20 train/test
-- Saves each split as `.pt` files (`{"images": tensor, "labels": tensor}`)
-- Creates the `cifar10` project in Armadillo
-- Uploads each partition via `POST /storage/projects/cifar10/objects`
-- Uploads full test set as `test/global_test.pt` for server-side evaluation
+2. Flower routes the job to the ClientApp subprocess
+   (OIDC token travels inside Flower's ConfigRecord)
 
-Armadillo object structure:
+3. ClientApp calls Armadillo to push data
+   (POST /flower/push-data with OIDC token, project, and resource)
+
+4. Armadillo (server-side):
+   a. Validates OIDC token, checks project authorization
+   b. Reads data from storage
+   c. Pushes data into container via docker exec
+
+5. ClientApp helper (load_data):
+   a. Waits for file to appear
+   b. Reads file into bytes
+   c. Deletes file immediately
+   d. Returns raw bytes
+
+6. Researcher code parses bytes into the format they need
+   (file is gone, data in memory only)
+
+7. Training proceeds. ClientApp exits. Memory freed by OS.
 ```
-Project: cifar10
-  partitions/partition_0_train.pt
-  partitions/partition_0_test.pt
-  partitions/partition_1_train.pt
-  partitions/partition_1_test.pt
-  test/global_test.pt
-```
-
-**3. `pytorchexample/task.py`** — add Armadillo download functions:
-- `download_from_armadillo(url, project, object_name, auth=None, token=None)` — downloads a `.pt` file via HTTP (objects endpoint with basic auth for now; token path added in stage 3)
-- `load_data_from_armadillo(partition_id, batch_size, ...)` — downloads train + test partitions, returns DataLoaders from TensorDatasets
-- `load_centralized_from_armadillo(...)` — downloads the global test set
-- Update `train()` and `test()` to handle both dict batches (`batch["img"]`) and tuple batches (`batch[0]`) since TensorDataset returns tuples
-- **Data cleanup:** after loading data into memory, delete the downloaded bytes/temp data so nothing persists on disk
-
-**4. `pytorchexample/client_app.py`** — branch data loading:
-- If `armadillo-url` is set in run_config, use `load_data_from_armadillo()`
-- Otherwise fall back to existing `load_data()`
-
-**5. `pytorchexample/server_app.py`** — update global evaluation:
-- Move `global_evaluate` inside `main()` as a closure to access Armadillo config
-- If `armadillo-url` is set, use `load_centralized_from_armadillo()`
-
-### Verification
-```bash
-# 1. Start Armadillo
-docker-compose up -d armadillo
-
-# 2. Upload CIFAR-10 partitions
-python scripts/setup_armadillo_data.py --num-partitions 2
-
-# 3. Run Flower
-flwr run . --run-config "armadillo-url=http://localhost:8080 armadillo-project=cifar10"
-```
-- No HTTP errors
-- Training proceeds with decreasing loss, global evaluation reports accuracy
-
-### Done when
-Flower clients successfully download CIFAR-10 from Armadillo and train with results comparable to the original demo.
 
 ---
 
-## Stage 3: Token-Authenticated Access
+## Security Properties
 
-**Goal:** Replace basic auth with internal token-based auth. The key idea is Armadillo's internal token pattern (short-lived, scoped JWTs signed with in-memory RSA keys). We may use the existing rawfiles endpoint or write a new dedicated endpoint — whichever works cleanest.
-
-### The internal token approach
-
-Armadillo's `ResourceTokenService` generates JWTs with:
-- Issuer: `"http://armadillo-internal"`
-- Claims: `resource_project`, `resource_object`, `email`
-- RSA-signed, configurable TTL (default 300s)
-
-This is the pattern we want to reuse. The existing rawfiles endpoint (`/rawfiles/{object}`) validates these tokens. If it works well for our needs, we use it directly. If not (e.g., per-object scoping is too restrictive), we write a new endpoint following the same token validation pattern but with broader scope (e.g., project-level access).
-
-### Changes
-
-**1. Armadillo: new token generation endpoint** — expose `ResourceTokenService` via API:
-- Add `ResourceTokenService` as a dependency to `StorageController` (currently only `CommandsImpl` uses it)
-- New endpoint, e.g.: `GET /storage/projects/{project}/resource-token/{object}`
-- Requires authentication (ROLE_SU or project researcher)
-- Returns `{"token": "<jwt-value>"}`
-- Calls existing `resourceTokenService.generateResourceToken()`
-
-**2. Armadillo: potentially a new data download endpoint** — if rawfiles doesn't fit:
-- Alternative endpoint with project-level token scope instead of per-object
-- Same internal token validation pattern
-- Decision deferred until we test rawfiles in practice
-
-**3. `scripts/get_tokens.py`** — new script to obtain tokens before `flwr run`:
-- Authenticates to Armadillo
-- Requests resource tokens for each partition's train and test data
-- Outputs `flwr run` command with tokens
-
-**4. `pyproject.toml`** — per-partition train/test token keys:
-```toml
-token-0-train = ""
-token-0-test = ""
-token-1-train = ""
-token-1-test = ""
-```
-
-**5. `pytorchexample/task.py`** — update `download_from_armadillo()`:
-- When `token` is provided: call rawfiles (or new endpoint) with `Authorization: Bearer <token>`
-- When `auth` is provided: fall back to objects endpoint (stage 2 mode)
-
-**6. `pytorchexample/client_app.py`** — read per-object tokens from run_config
-
-### Data security within Docker
-
-Critical requirement: training data must not persist in the Docker container after the job completes.
-
-- **In-memory only:** `download_from_armadillo()` loads data into `io.BytesIO` → `torch.load()` → Python tensors. No files written to disk.
-- **Explicit cleanup:** after training completes, explicitly `del` the data tensors and call `gc.collect()` to release memory
-- **Container lifecycle:** in production deployment, the Docker container running the Flower client should be ephemeral — created for the job and destroyed after. Any tmpfs or writable layer is discarded.
-- **No caching:** unlike the current `fds` global cache pattern, Armadillo-sourced data is NOT cached between rounds. It's loaded fresh each time (or held only in memory for the duration of training).
-
-### Verification
-```bash
-# 1. Deploy Armadillo with token endpoint
-# 2. Get tokens
-python scripts/get_tokens.py --num-partitions 2
-# 3. Run Flower with tokens only (no armadillo-user/pass)
-flwr run . --run-config "armadillo-url=http://localhost:8080 armadillo-project=cifar10 token-0-train=eyJ... token-0-test=eyJ..."
-```
-- Armadillo audit logs show `DOWNLOAD_RESOURCE` events
-- No basic auth credentials in the run config
-- Data not persisted to disk in client
-
-### Done when
-Full end-to-end flow: authenticate → get scoped tokens → pass through Flower → download data via token → train → cleanup.
+| Property | DataSHIELD | Flower |
+|----------|------------|--------|
+| **Authentication** | OIDC via Spring Security | OIDC via Spring Security |
+| **Authorization** | `ROLE_<PROJECT>_RESEARCHER` | `ROLE_<PROJECT>_RESEARCHER` |
+| **Data push mechanism** | Rserve protocol | Docker exec |
+| **File lifetime** | Milliseconds | Milliseconds |
+| **Credentials in container?** | No | No |
+| **Who controls file deletion?** | Armadillo (via Rserve) | Our helper library (`load_data()`) |
 
 ---
 
-## Stage 4: Differential Privacy on Model Parameters
+## Components to Build
 
-**Goal:** Add differential privacy to the model parameters exchanged between SuperNodes and SuperLink each round, so that updates from one node cannot leak information about that node's training data.
+### 1. Armadillo: Push-Data Endpoint (Java)
 
-### Flower DP options
+A new `POST /flower/push-data` endpoint that:
+- Accepts project and resource identifiers plus an OIDC token
+- Uses existing Spring Security and `@PreAuthorize` for authentication/authorization
+- Reads data from storage using existing `armadilloStorage.loadObject()`
+- Pushes data into the requesting container via `docker exec`
 
-Flower provides three DP approaches. For our use case (protecting parameters in transit between nodes and server):
+### 2. Python Helper: `load_data()` (molgenis-flwr-armadillo)
 
-1. **Central DP, server-side clipping** — server clips and adds noise after receiving updates. Simpler but server sees raw updates briefly.
-2. **Central DP, client-side clipping** — clients clip updates before sending, server adds noise after aggregation. Better privacy: server never sees unclipped updates.
-3. **Local DP** — each client adds noise to its own updates before sending. Strongest privacy guarantee but typically reduces model accuracy more.
+A function that:
+- Calls Armadillo's push-data endpoint with the OIDC token from the Flower context
+- Waits for the file to appear in the container
+- Reads the file into memory as raw bytes
+- Deletes the file immediately
+- Returns the bytes for the researcher to parse in any format they need
 
-**Recommended: Client-side clipping** — good balance of privacy (clipping happens before data leaves the node) and utility (noise is calibrated centrally).
+### 3. Researcher's ClientApp
 
-### Changes
-
-**1. `pytorchexample/server_app.py`** — wrap FedAvg with DP strategy:
-```python
-from flwr.serverapp.strategy import DifferentialPrivacyClientSideFixedClipping
-
-strategy = FedAvg(fraction_evaluate=fraction_evaluate)
-dp_strategy = DifferentialPrivacyClientSideFixedClipping(
-    strategy,
-    noise_multiplier=noise_multiplier,
-    clipping_norm=clipping_norm,
-    num_sampled_clients=num_sampled_clients,
-)
-```
-
-**2. `pytorchexample/client_app.py`** — add clipping mod:
-```python
-from flwr.clientapp.mod import fixedclipping_mod
-
-app = ClientApp(mods=[fixedclipping_mod])
-```
-
-**3. `pyproject.toml`** — add DP config parameters:
-```toml
-[tool.flwr.app.config]
-# ... existing keys ...
-noise-multiplier = 1.0
-clipping-norm = 1.0
-num-sampled-clients = 2
-```
-
-### Key parameters to tune
-- **`noise_multiplier`**: higher = more privacy, less accuracy. Start with 1.0.
-- **`clipping_norm`**: max L2 norm of client updates. Start with 1.0 and adjust based on observed update magnitudes.
-- **`num_sampled_clients`**: number of clients per round (affects noise calibration).
-
-### Verification
-- Run with DP enabled and verify training completes (accuracy will be lower than without DP — this is expected)
-- Run with `noise_multiplier=0.0` to confirm results match the non-DP baseline
-- Compare accuracy across different noise multiplier values to understand the privacy-utility tradeoff
-
-### Done when
-Model parameters are clipped on the client side and noise is added server-side before aggregation. Training completes with reasonable (if reduced) accuracy.
+The researcher calls `load_data(context)` to get raw bytes, then parses them with whatever library they need (pandas, torch, numpy, PIL, etc.). The file is already gone by the time their code runs.
 
 ---
 
-## Stage 5: Per-Container Permissions
+## Implementation Stages
 
-**Goal:** Extend Armadillo's permission model so users have access to specific containers (DataSHIELD profiles or Flower client-apps), not just projects.
+### Stage 1: Token Routing POC ✅
 
-### Current Model
+Pass token strings via Flower's run_config and verify each client receives its correct token. Complete.
 
-```
-User → Project → [all containers]
-```
+### Stage 2: Push-Data Endpoint (Armadillo)
 
-All authenticated users with project access can use any container.
+New `POST /flower/push-data` endpoint. Reuses existing auth, storage, and Docker client. Main new logic is the `docker exec` data push and container ID resolution.
 
-### Target Model
+### Stage 3: Python Data Helpers (molgenis-flwr-armadillo)
 
-```
-User → Project → Container(s) they're permitted to use
-                    ├── DataSHIELD: default, donkey, panda-lambda
-                    └── Flower: lung-cancer-fl, diabetes-study
-```
+`load_data(context)` helper and updated example app. End-to-end test: authenticate → submit job → data pushed → model trained.
 
-### Changes
+### Stage 4: Differential Privacy
 
-**1. Armadillo: Extend permission data model**
+Client-side clipping on model parameters. Clients clip updates before sending, server adds noise after aggregation.
 
-Update `ProjectPermission` to include container:
+### Stage 5: Per-Container Permissions
 
-```java
-// Before
-public record ProjectPermission(String email, String project) {}
+Extend Armadillo's permission model so users have access to specific containers, not just projects. Currently `User → Project → [all containers]`, target is `User → Project → Container(s)`.
 
-// After
-public record ProjectPermission(String email, String project, String container) {}
-```
+### Stage 6: Result Storage
 
-Update `access.json` structure:
-```json
-{
-  "permissions": [
-    {"email": "user@example.com", "project": "cohort-study", "container": "default"},
-    {"email": "user@example.com", "project": "cohort-study", "container": "lung-cancer-fl"}
-  ]
-}
-```
-
-**2. Armadillo: Update role generation**
-
-In `AccessService.getAuthoritiesForEmail()`:
-
-```java
-// Before
-"ROLE_" + project.toUpperCase() + "_RESEARCHER"
-
-// After
-"ROLE_" + project.toUpperCase() + "_" + container.toUpperCase() + "_RESEARCHER"
-```
-
-**3. Armadillo: Add authorization checks**
-
-DataSHIELD container selection:
-```java
-// In ProfileService or similar
-@PreAuthorize("hasAnyRole('ROLE_SU', 'ROLE_' + #project.toUpperCase() + '_' + #container.toUpperCase() + '_RESEARCHER')")
-public void selectProfile(String project, String container) { ... }
-```
-
-Flower data fetch (client-app must identify itself):
-```java
-@PreAuthorize("hasAnyRole('ROLE_SU', 'ROLE_' + #project.toUpperCase() + '_' + #appId.toUpperCase() + '_RESEARCHER')")
-public InputStream loadObjectForApp(String project, String object, String appId) { ... }
-```
-
-**4. Armadillo: Permission management API**
-
-New/updated endpoints in `AccessController`:
-```
-POST   /access/projects/{project}/containers/{container}/users
-DELETE /access/projects/{project}/containers/{container}/users/{email}
-GET    /access/projects/{project}/containers
-GET    /access/users/{email}/containers
-```
-
-**5. Armadillo: UI extension**
-
-Extend user management page to show/edit container permissions per project. Minimal change - add a multi-select or checkbox list for containers.
-
-**6. Migration strategy**
-
-For existing permissions without container specified:
-- Option A: Grant access to ALL containers (backwards compatible)
-- Option B: Grant access to a "default" container only (more restrictive)
-
-Recommend Option A for smooth migration.
-
-**7. Flower client-app: Pass app ID when fetching data**
-
-Update `fetch_from_armadillo()` to include app identifier:
-```python
-def fetch_from_armadillo(url: str, project: str, object_name: str, token: str, app_id: str) -> bytes:
-    endpoint = f"{url}/storage/projects/{project}/objects/{object_name}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "X-App-Id": app_id  # or as query param
-    }
-    ...
-```
-
-### Verification
-
-1. User with container permission can access that container
-2. User without container permission gets 403
-3. Existing permissions continue to work (migration)
-4. Both DataSHIELD and Flower apps respect container permissions
-
-### Done when
-
-- Permission model extended with container field
-- Authorization checks enforce container access
-- API endpoints for managing container permissions
-- UI allows assigning users to containers
-- Flower client-apps pass app ID and permissions are enforced
+Allow researchers to upload model results to Armadillo and retrieve them later.
 
 ---
 
-## Files Summary
+## Manual Review Checklist
 
-All Python files are in `molgenis-flwr-armadillo` (`epic/flower` branch):
+Since file deletion is handled by our helper library, researcher-submitted code should be reviewed for:
 
-| File | Action | Stage |
-|------|--------|-------|
-| `pyproject.toml` | New (based on quickstart) | 1, 2, 3, 4 |
-| `pytorchexample/client_app.py` | New (based on quickstart) | 1, 2, 3, 4 |
-| `pytorchexample/task.py` | New (based on quickstart) | 1, 2, 3 |
-| `pytorchexample/server_app.py` | New (based on quickstart) | 2, 4 |
-| `scripts/setup_armadillo_data.py` | New | 2 |
-| `scripts/get_tokens.py` | New | 3 |
-
-Armadillo changes in `molgenis-service-armadillo` (`epic/flower` branch):
-
-| File | Action | Stage |
-|------|--------|-------|
-| `StorageController.java` | Modify | 3 |
-
-## Helper Functions for Researchers
-
-**Goal:** Reduce boilerplate in researcher code by providing helper functions in `molgenis_flwr_armadillo` for token handling.
-
-### Current Pain Point
-
-Researchers must copy token-handling code into their apps:
-
-**Server side:**
-```python
-# Collect all tokens from run_config to pass to clients
-tokens = {k: v for k, v in context.run_config.items() if k.startswith("token-")}
-train_config = ConfigRecord({"lr": lr, **tokens})
-```
-
-**Client side:**
-```python
-node_name = context.node_config["node-name"]
-token = msg.content["config"].get(f"token-{node_name}", "")
-```
-
-### Solution: Helper Functions
-
-Add to `src/molgenis_flwr_armadillo/helpers.py`:
-
-```python
-"""Helper functions for token handling in Flower apps."""
-
-from flwr.app import Context, Message
-
-
-def extract_tokens(context: Context) -> dict:
-    """Extract all tokens from run_config for passing to clients.
-
-    Use in server_app.py to collect tokens for the train_config.
-
-    Args:
-        context: The Flower Context object
-
-    Returns:
-        Dict of token keys to token values, e.g. {"token-demo": "eyJ..."}
-
-    Example:
-        tokens = extract_tokens(context)
-        train_config = ConfigRecord({"lr": lr, **tokens})
-    """
-    return {k: v for k, v in context.run_config.items() if k.startswith("token-")}
-
-
-def get_node_token(msg: Message, context: Context) -> str:
-    """Extract this node's token from the message config.
-
-    Use in client_app.py to get the token for this specific node.
-
-    Args:
-        msg: The Flower Message received from the server
-        context: The Flower Context object
-
-    Returns:
-        The token string for this node, or empty string if not found
-
-    Example:
-        token = get_node_token(msg, context)
-        data = fetch_from_armadillo(token)
-    """
-    node_name = context.node_config.get("node-name", "")
-    return msg.content.get("config", {}).get(f"token-{node_name}", "")
-```
-
-### Updated Researcher Code
-
-**Server side:**
-```python
-from molgenis_flwr_armadillo import extract_tokens
-
-@app.main()
-def main(grid: Grid, context: Context) -> None:
-    lr = context.run_config["learning-rate"]
-    tokens = extract_tokens(context)
-    train_config = ConfigRecord({"lr": lr, **tokens})
-    # ...
-```
-
-**Client side:**
-```python
-from molgenis_flwr_armadillo import get_node_token
-
-@app.train()
-def train(msg: Message, context: Context):
-    token = get_node_token(msg, context)
-    # Use token to fetch data from Armadillo
-    # ...
-```
-
-### Changes Required
-
-1. **New file:** `src/molgenis_flwr_armadillo/helpers.py` — the helper functions
-2. **Update:** `src/molgenis_flwr_armadillo/__init__.py` — export the helpers
-3. **Update:** `README.md` — document the helper functions
-4. **Update:** Example apps — use the helpers instead of inline code
-
-### Done when
-- Helper functions are implemented and exported
-- Examples use the helper functions
-- README documents the helpers
+- [ ] Uses `load_data(context)` to get data
+- [ ] Does not access the data directory directly
+- [ ] No hardcoded file paths
+- [ ] No exfiltration of raw bytes
 
 ---
 
-## Error Handling for Data Fetches
-
-**Goal:** Provide clear, actionable error messages when Armadillo data requests fail, rather than generic HTTP errors.
-
-### Approach
-
-We chose **not** to validate tokens upfront because:
-1. Token validity alone isn't enough — project/data access must also be checked
-2. The coordinator doesn't know what specific data the app will request
-3. Upfront validation adds complexity and extra network calls
-
-Instead, we invest in **clear error messages at the point of failure**.
-
-### Implementation
-
-Wrap all Armadillo HTTP requests with descriptive error handling:
-
-```python
-class ArmadilloError(Exception):
-    """Base exception for Armadillo access errors."""
-    pass
-
-class AuthenticationError(ArmadilloError):
-    """Token is invalid or expired."""
-    pass
-
-class AccessDeniedError(ArmadilloError):
-    """User lacks permission to access this resource."""
-    pass
-
-class ResourceNotFoundError(ArmadilloError):
-    """Requested project or object does not exist."""
-    pass
-
-
-def fetch_from_armadillo(url: str, project: str, object_name: str, token: str) -> bytes:
-    """Fetch data from Armadillo with clear error handling."""
-    endpoint = f"{url}/storage/projects/{project}/objects/{object_name}"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    resp = requests.get(endpoint, headers=headers)
-
-    if resp.status_code == 401:
-        raise AuthenticationError(
-            f"Authentication failed for '{url}'.\n"
-            f"Token may be expired — re-run: molgenis-flwr-authenticate"
-        )
-    if resp.status_code == 403:
-        raise AccessDeniedError(
-            f"Access denied to project '{project}' on '{url}'.\n"
-            f"Check your permissions in Armadillo."
-        )
-    if resp.status_code == 404:
-        raise ResourceNotFoundError(
-            f"Object '{object_name}' not found in project '{project}'.\n"
-            f"Available data can be listed with: molgenis-flwr-tables"
-        )
-
-    resp.raise_for_status()
-    return resp.content
-```
-
-### Error messages should:
-- Identify which node/server had the problem
-- Explain what went wrong in plain language
-- Suggest a remediation action
-- Propagate cleanly back to the user (not buried in stack traces)
-
-### Done when
-- All Armadillo requests use the error-handling wrapper
-- Error messages are clear and actionable
-- Errors propagate to the user with node context
-
----
-
-## List Available Data (`molgenis-flwr-tables`)
-
-**Goal:** Provide a way for researchers to see what data they have access to on each Armadillo node, similar to `datashield.tables()`. Run this after authentication but before `molgenis-flwr-run`.
-
-### Usage
-
-```bash
-# After authenticating
-molgenis-flwr-authenticate --config flower-nodes.yaml
-
-# List available tables/data on all nodes
-molgenis-flwr-tables --config flower-nodes.yaml
-```
-
-Output:
-```
-Node: demo (https://armadillo-demo.molgenis.net)
-  Projects:
-    - cifar10
-      - partitions/partition_0_train.pt
-      - partitions/partition_0_test.pt
-    - cohort_data
-      - tables/demographics
-      - tables/outcomes
-
-Node: localhost (https://armadillo.dev.molgenis.org)
-  Projects:
-    - cifar10
-      - partitions/partition_1_train.pt
-      - partitions/partition_1_test.pt
-```
-
-### Implementation
-
-Add CLI entry point in `pyproject.toml`:
-```toml
-[project.scripts]
-molgenis-flwr-tables = "molgenis_flwr_armadillo.tables:main"
-```
-
-New file `src/molgenis_flwr_armadillo/tables.py`:
-```python
-"""List available data on Armadillo nodes."""
-
-import requests
-from .authenticate import load_tokens
-
-def list_projects(url: str, token: str) -> list[str]:
-    """List projects the user has access to."""
-    resp = requests.get(
-        f"{url}/storage/projects",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-def list_objects(url: str, project: str, token: str) -> list[str]:
-    """List objects in a project."""
-    resp = requests.get(
-        f"{url}/storage/projects/{project}/objects",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-def main():
-    # Load config and tokens, list data for each node
-    ...
-```
-
-### Programmatic access
-
-Also expose as a helper function for use in code:
-```python
-from molgenis_flwr_armadillo import list_available_data
-
-# Returns dict of node -> projects -> objects
-data = list_available_data(config_path="flower-nodes.yaml")
-```
-
-### Done when
-- CLI command `molgenis-flwr-tables` works
-- Helper function `list_available_data()` is exported
-- Output is clear and shows the hierarchy
-
----
-
-## Stage 6: Result Storage in Armadillo
-
-**Goal:** Allow researchers to upload model results (trained models, metrics) to Armadillo and retrieve them later via authenticated access.
-
-### Problem
-
-Currently, Flower saves results to the ServerApp's filesystem (`final_model.pt`, `results.json`). In Docker deployments, these are lost when the container stops. Researchers need a way to persist and retrieve their results.
-
-### Proposed Solution
-
-Store results in Armadillo under a user-specific folder structure:
-
-```
-Project: flower-results
-  users/{email}/
-    {run-id}/
-      final_model.pt
-      results.json
-      run_config.json
-```
-
-### Changes Required
-
-**1. Armadillo: New upload endpoint for results**
-
-```
-POST /storage/projects/{project}/results/{run-id}/{filename}
-Authorization: Bearer <token>
-Content-Type: application/octet-stream
-```
-
-- Authenticated users can upload to their own folder
-- Run ID provides namespacing for multiple runs
-- Returns URL/path for later retrieval
-
-**2. Armadillo: List user's results**
-
-```
-GET /storage/projects/{project}/results
-Authorization: Bearer <token>
-```
-
-Returns list of user's runs with metadata (timestamps, sizes).
-
-**3. Armadillo: Download results**
-
-```
-GET /storage/projects/{project}/results/{run-id}/{filename}
-Authorization: Bearer <token>
-```
-
-Users can only access their own results (or results shared with them).
-
-**4. Python helper: `upload_results()`**
-
-```python
-from molgenis_flwr_armadillo import upload_results
-
-# In server_app.py after training
-upload_results(
-    token=token,
-    run_id=run_id,
-    files={"final_model.pt": model_bytes, "results.json": metrics}
-)
-```
-
-**5. CLI tool: `molgenis-flwr-results`**
-
-```bash
-# List your results
-molgenis-flwr-results --list
-
-# Download a specific run's results
-molgenis-flwr-results --download <run-id> --output ./my-results/
-```
-
-### Access Control
-
-- Users can only see/download their own results by default
-- Admins can access all results
-- Future: sharing mechanism (share results with specific users/groups)
-
-### Done when
-
-- Results can be uploaded from ServerApp to Armadillo
-- Users can list and download their previous runs
-- Results persist beyond container lifecycle
-- Access control enforced (users see only their results)
-
----
-
-## Known Risks
-
-1. **Shell escaping**: Long JWT tokens on the command line may cause issues. May need a config file approach.
-2. **Token TTL**: Default 300s. Fine for simulation. For production, increase or implement refresh.
-3. **rawfiles object name matching**: `StorageController.java:440-441` strips extension and lowercases. Token generation must match.
-4. **Data security**: Data is held in memory only — never written to disk. Containers should be ephemeral.
+## Estimated Effort
+
+| Component | Complexity | Notes |
+|-----------|------------|-------|
+| Push-data endpoint (Java) | Low | Single endpoint, reuses existing auth and storage |
+| Docker exec push logic (Java) | Low | Reuses existing Docker client |
+| `load_data()` helper (Python) | Low | ~50 lines |
+| Docker image changes | Minimal | Ensure data directory exists |
+
+This reuses existing Spring Security, storage service, and Docker client infrastructure.
 
 ---
 
@@ -779,61 +178,41 @@ molgenis-flwr-results --download <run-id> --output ./my-results/
 
 ### Infrastructure
 - [x] Package structure (`molgenis_flwr_armadillo`)
-- [x] CLI tool: `molgenis-flwr-authenticate`
-- [x] CLI tool: `molgenis-flwr-run`
-- [x] Token storage/retrieval (`save_tokens`, `load_tokens`)
-- [x] Helper functions (`extract_tokens`, `get_node_token`)
-- [ ] CLI tool: `molgenis-flwr-tables` (list available data)
-- [ ] Helper function: `list_available_data()`
-- [ ] Error handling wrapper for Armadillo requests
+- [x] CLI: `molgenis-flwr-authenticate`
+- [x] CLI: `molgenis-flwr-run`
+- [x] Token routing helpers (`extract_tokens`, `get_node_token`)
+- [ ] CLI: `molgenis-flwr-tables` (list available data)
+- [ ] Error handling for Armadillo requests
 
-### Stage 1: Token String Routing POC
-- [x] Token placeholder keys in `pyproject.toml`
-- [x] Token extraction in client_app.py
-- [x] Token forwarding via ConfigRecord in server_app.py
-- [x] End-to-end token flow verified
+### Stage 1: Token Routing ✅
+### Stage 2: Push-Data Endpoint
+- [ ] `FlowerController` with push-data endpoint
+- [ ] Docker exec data push logic
+- [ ] Container ID resolution
+- [ ] Integration test
 
-### Stage 2: Armadillo Data Access
-- [ ] Setup script for uploading data to Armadillo
-- [ ] `download_from_armadillo()` function
-- [ ] Client data loading from Armadillo
-- [ ] Server global evaluation from Armadillo
-- [ ] End-to-end data flow verified
-
-### Stage 3: Token-Authenticated Access
-- [ ] Armadillo: token generation endpoint
-- [ ] Armadillo: token-authenticated download endpoint
-- [ ] Script to obtain resource tokens
-- [ ] Per-partition token keys in config
-- [ ] Token-based download in task.py
-- [ ] End-to-end authenticated flow verified
+### Stage 3: Python Data Helpers
+- [ ] `load_data()` implementation
+- [ ] Example app updated
+- [ ] End-to-end verified
 
 ### Stage 4: Differential Privacy
-- [ ] DP strategy wrapper in server_app.py
-- [ ] Clipping mod in client_app.py
-- [ ] DP config parameters
-- [ ] Privacy-utility tradeoff documented
+- [ ] DP strategy wrapper + client clipping
 
 ### Stage 5: Per-Container Permissions
-- [ ] Armadillo: Extend `ProjectPermission` with container field
-- [ ] Armadillo: Update role generation for container-scoped roles
-- [ ] Armadillo: Add `@PreAuthorize` checks for container access
-- [ ] Armadillo: Permission management API endpoints
-- [ ] Armadillo: UI extension for container permissions
-- [ ] Armadillo: Migration for existing permissions
-- [ ] Flower: Pass app ID when fetching data
+- [ ] Permission model, authorization, API, UI, migration
 
-### Stage 6: Result Storage in Armadillo
-- [ ] Armadillo: Upload endpoint for results (`POST /storage/projects/{project}/results/...`)
-- [ ] Armadillo: List results endpoint (`GET /storage/projects/{project}/results`)
-- [ ] Armadillo: Download results endpoint
-- [ ] Armadillo: Access control (users see only their results)
-- [ ] Python helper: `upload_results()` function
-- [ ] CLI tool: `molgenis-flwr-results` (list and download)
-- [ ] ServerApp integration: auto-upload after training
+### Stage 6: Result Storage
+- [ ] Upload/download/list endpoints + CLI tool
 
-### Documentation
-- [x] README with usage instructions
-- [x] Configuration flow diagram
-- [x] Token flow diagram
-- [ ] Helper functions documented in README
+---
+
+## Open Questions
+
+1. **Container ID resolution:** How does Armadillo know which container to `docker exec` into? Options: (a) pass container ID in the request, (b) Armadillo tracks which containers it started and maps by identifier.
+
+2. **Server-side evaluation:** ServerApp needs test data for `global_evaluate()`. Options: (a) client-side evaluation only, (b) push data to the ServerApp container too.
+
+3. **OIDC token refresh:** If access token expires during long training, refresh token is available. Could add automatic refresh to Python helpers.
+
+4. **Armadillo URL from container:** `host.docker.internal` works on Docker Desktop; on Linux production, may need the Docker bridge gateway IP or an env var set by Armadillo when creating the container.
