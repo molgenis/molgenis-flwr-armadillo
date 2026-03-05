@@ -28,6 +28,9 @@ dependencies = [
   "pyyaml",
   "requests",
   "rich",
+  "cryptography>=41.0.0",
+  "flwr>=1.23.0",
+  "grpcio>=1.60.0",
   "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
 ]
 
@@ -83,6 +86,8 @@ exclude_lines = [
 molgenis-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
 molgenis-flwr-resources = "molgenis_flwr_armadillo.resources:main"
 molgenis-flwr-run = "molgenis_flwr_armadillo.run:main"
+molgenis-flwr-sign = "molgenis_flwr_armadillo.sign_cli:main"
+molgenis-flwr-keygen = "molgenis_flwr_armadillo.keygen:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/molgenis_flwr_armadillo"]

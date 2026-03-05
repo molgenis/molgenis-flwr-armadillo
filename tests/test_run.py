@@ -1,156 +1,177 @@
-"""Tests for run functions."""
+"""Tests for submit_signed_fab and CLI."""
 
-from unittest.mock import MagicMock, patch, call
+import base64
+import json
+import os
+import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-class TestRun:
-    """Tests for run function."""
+def _make_sfab(fab_hash="abc123", fab_content=b"fake-fab", verifications=None):
+    """Create a temporary .sfab file and return its path."""
+    if verifications is None:
+        verifications = {"fpk_test1234": '{"signature": "sig", "signed_at": 100}'}
 
-    @patch("molgenis_flwr_armadillo.run.subprocess.run")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.sys.exit")
-    def test_builds_correct_command(self, mock_exit, mock_console, mock_load, mock_subprocess):
-        """Should build correct flwr run command with tokens."""
-        from molgenis_flwr_armadillo.run import run
+    sfab = {
+        "fab_hash": fab_hash,
+        "fab_content": base64.b64encode(fab_content).decode(),
+        "verifications": verifications,
+    }
+    fd, path = tempfile.mkstemp(suffix=".sfab")
+    with os.fdopen(fd, "w") as f:
+        json.dump(sfab, f)
+    return path
 
-        mock_load.return_value = {
-            "token-demo": "abc123",
-            "token-localhost": "xyz789",
-        }
-        mock_subprocess.return_value = MagicMock(returncode=0)
 
-        run(app_dir="my-app")
+class TestSubmitSignedFab:
+    """Tests for submit_signed_fab function."""
 
-        # Check subprocess was called with correct command
-        mock_subprocess.assert_called_once()
-        cmd = mock_subprocess.call_args[0][0]
+    @patch("molgenis_flwr_armadillo.run.grpc")
+    def test_loads_sfab_and_submits(self, mock_grpc):
+        """Should load .sfab, create Fab, and call StartRun."""
+        from molgenis_flwr_armadillo.run import submit_signed_fab
 
-        assert cmd[0] == "flwr"
-        assert cmd[1] == "run"
-        assert cmd[2] == "my-app"
-        assert cmd[3] == "--run-config"
-        # run_config should contain both tokens
-        assert "token-demo" in cmd[4]
-        assert "token-localhost" in cmd[4]
+        mock_channel = MagicMock()
+        mock_grpc.insecure_channel.return_value = mock_channel
+        mock_stub = MagicMock()
+        mock_stub.StartRun.return_value = MagicMock(run_id=42)
 
-    @patch("molgenis_flwr_armadillo.run.subprocess.run")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.sys.exit")
-    def test_passes_extra_args(self, mock_exit, mock_console, mock_load, mock_subprocess):
-        """Should pass extra args to flwr run."""
-        from molgenis_flwr_armadillo.run import run
+        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
+            sfab_path = _make_sfab()
+            try:
+                run_id = submit_signed_fab(sfab_path, "localhost:9093")
+            finally:
+                os.unlink(sfab_path)
 
-        mock_load.return_value = {"token-demo": "abc"}
-        mock_subprocess.return_value = MagicMock(returncode=0)
+        assert run_id == 42
+        mock_grpc.insecure_channel.assert_called_once_with("localhost:9093")
+        mock_stub.StartRun.assert_called_once()
 
-        run(app_dir="my-app", extra_args=["--stream", "--federation", "local"])
+    @patch("molgenis_flwr_armadillo.run.grpc")
+    def test_passes_config_overrides(self, mock_grpc):
+        """Should parse and pass config overrides."""
+        from molgenis_flwr_armadillo.run import submit_signed_fab
 
-        cmd = mock_subprocess.call_args[0][0]
+        mock_channel = MagicMock()
+        mock_grpc.insecure_channel.return_value = mock_channel
+        mock_stub = MagicMock()
+        mock_stub.StartRun.return_value = MagicMock(run_id=1)
 
-        assert "--stream" in cmd
-        assert "--federation" in cmd
-        assert "local" in cmd
+        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
+            with patch("molgenis_flwr_armadillo.run.parse_config_args") as mock_parse:
+                mock_parse.return_value = {"key": "val"}
+                sfab_path = _make_sfab()
+                try:
+                    submit_signed_fab(
+                        sfab_path, "localhost:9093", ['key="val"']
+                    )
+                finally:
+                    os.unlink(sfab_path)
 
-    @patch("molgenis_flwr_armadillo.run.subprocess.run")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.sys.exit")
-    def test_exits_with_subprocess_returncode(self, mock_exit, mock_console, mock_load, mock_subprocess):
-        """Should exit with subprocess return code."""
-        from molgenis_flwr_armadillo.run import run
+                mock_parse.assert_called_once_with(['key="val"'])
 
-        mock_load.return_value = {"token-demo": "abc"}
-        mock_subprocess.return_value = MagicMock(returncode=42)
+    @patch("molgenis_flwr_armadillo.run.grpc")
+    def test_decodes_fab_content(self, mock_grpc):
+        """Should base64-decode fab_content from .sfab."""
+        from molgenis_flwr_armadillo.run import submit_signed_fab
 
-        run(app_dir="my-app")
+        mock_channel = MagicMock()
+        mock_grpc.insecure_channel.return_value = mock_channel
+        mock_stub = MagicMock()
+        mock_stub.StartRun.return_value = MagicMock(run_id=1)
 
-        mock_exit.assert_called_once_with(42)
+        original_content = b"real-fab-bytes-here"
 
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    def test_exits_on_missing_tokens(self, mock_load, mock_console):
-        """Should exit with code 1 when tokens file is missing."""
-        from molgenis_flwr_armadillo.run import run
+        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
+            with patch("molgenis_flwr_armadillo.run.fab_to_proto") as mock_fab_to_proto:
+                mock_fab_to_proto.return_value = MagicMock()
+                with patch("molgenis_flwr_armadillo.run.StartRunRequest"):
+                    sfab_path = _make_sfab(fab_content=original_content)
+                    try:
+                        submit_signed_fab(sfab_path, "localhost:9093")
+                    finally:
+                        os.unlink(sfab_path)
 
-        mock_load.side_effect = FileNotFoundError("No tokens found")
+                    # Check the Fab passed to fab_to_proto has decoded content
+                    fab_arg = mock_fab_to_proto.call_args[0][0]
+                    assert fab_arg.content == original_content
 
-        with pytest.raises(SystemExit) as exc_info:
-            run(app_dir="my-app")
+    @patch("molgenis_flwr_armadillo.run.grpc")
+    def test_closes_channel(self, mock_grpc):
+        """Should close the gRPC channel after use."""
+        from molgenis_flwr_armadillo.run import submit_signed_fab
 
-        assert exc_info.value.code == 1
+        mock_channel = MagicMock()
+        mock_grpc.insecure_channel.return_value = mock_channel
+        mock_stub = MagicMock()
+        mock_stub.StartRun.return_value = MagicMock(run_id=1)
 
-    @patch("molgenis_flwr_armadillo.run.subprocess.run")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.sys.exit")
-    def test_default_app_dir_is_current(self, mock_exit, mock_console, mock_load, mock_subprocess):
-        """Should use current directory as default app_dir."""
-        from molgenis_flwr_armadillo.run import run
+        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
+            sfab_path = _make_sfab()
+            try:
+                submit_signed_fab(sfab_path, "localhost:9093")
+            finally:
+                os.unlink(sfab_path)
 
-        mock_load.return_value = {"token-demo": "abc"}
-        mock_subprocess.return_value = MagicMock(returncode=0)
+        mock_channel.close.assert_called_once()
 
-        run()
+    def test_raises_on_missing_sfab(self):
+        """Should raise FileNotFoundError for missing .sfab file."""
+        from molgenis_flwr_armadillo.run import submit_signed_fab
 
-        cmd = mock_subprocess.call_args[0][0]
-        assert cmd[2] == "."
-
-    @patch("molgenis_flwr_armadillo.run.subprocess.run")
-    @patch("molgenis_flwr_armadillo.run.load_tokens")
-    @patch("molgenis_flwr_armadillo.run.console")
-    @patch("molgenis_flwr_armadillo.run.sys.exit")
-    def test_quotes_token_values(self, mock_exit, mock_console, mock_load, mock_subprocess):
-        """Should quote token values in run-config."""
-        from molgenis_flwr_armadillo.run import run
-
-        mock_load.return_value = {"token-demo": "value with spaces"}
-        mock_subprocess.return_value = MagicMock(returncode=0)
-
-        run(app_dir="my-app")
-
-        cmd = mock_subprocess.call_args[0][0]
-        run_config = cmd[4]
-
-        # Value should be quoted
-        assert 'token-demo="value with spaces"' in run_config
+        with pytest.raises(FileNotFoundError):
+            submit_signed_fab("/nonexistent/path.sfab", "localhost:9093")
 
 
 class TestMain:
     """Tests for main CLI entry point."""
 
-    @patch("molgenis_flwr_armadillo.run.run")
-    def test_parses_app_dir(self, mock_run):
-        """Should parse --app-dir argument."""
+    @patch("molgenis_flwr_armadillo.run.submit_signed_fab")
+    @patch("molgenis_flwr_armadillo.run.console")
+    def test_parses_required_args(self, mock_console, mock_submit):
+        """Should parse --signed-fab and --federation-address."""
         from molgenis_flwr_armadillo.run import main
         import sys
 
-        with patch.object(sys, "argv", ["prog", "--app-dir", "my-app"]):
-            main()
+        mock_submit.return_value = 42
+        sfab_path = _make_sfab()
 
-        mock_run.assert_called_once_with("my-app", [])
+        try:
+            with patch.object(
+                sys,
+                "argv",
+                ["prog", "--signed-fab", sfab_path, "--federation-address", "host:9093"],
+            ):
+                main()
+        finally:
+            os.unlink(sfab_path)
 
-    @patch("molgenis_flwr_armadillo.run.run")
-    def test_passes_extra_args_after_separator(self, mock_run):
-        """Should pass args after -- to flwr run."""
+        mock_submit.assert_called_once_with(sfab_path, "host:9093", None)
+
+    @patch("molgenis_flwr_armadillo.run.submit_signed_fab")
+    @patch("molgenis_flwr_armadillo.run.console")
+    def test_handles_grpc_error(self, mock_console, mock_submit):
+        """Should exit 1 on gRPC error."""
         from molgenis_flwr_armadillo.run import main
         import sys
+        import grpc
 
-        with patch.object(sys, "argv", ["prog", "--app-dir", "my-app", "--", "--stream"]):
-            main()
+        error = grpc.RpcError()
+        error.code = lambda: grpc.StatusCode.PERMISSION_DENIED
+        error.details = lambda: "FAB not signed"
+        mock_submit.side_effect = error
 
-        mock_run.assert_called_once_with("my-app", ["--stream"])
-
-    @patch("molgenis_flwr_armadillo.run.run")
-    def test_default_app_dir(self, mock_run):
-        """Should use default app_dir when not specified."""
-        from molgenis_flwr_armadillo.run import main
-        import sys
-
-        with patch.object(sys, "argv", ["prog"]):
-            main()
-
-        mock_run.assert_called_once_with(".", [])
+        sfab_path = _make_sfab()
+        try:
+            with patch.object(
+                sys,
+                "argv",
+                ["prog", "--signed-fab", sfab_path, "--federation-address", "host:9093"],
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 1
+        finally:
+            os.unlink(sfab_path)

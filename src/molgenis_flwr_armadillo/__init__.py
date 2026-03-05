@@ -1,5 +1,4 @@
 from molgenis_flwr_armadillo.authenticate import authenticate
-from molgenis_flwr_armadillo.discovery import discover_nodes, handle_discovery
 from molgenis_flwr_armadillo.helpers import (
     check_access,
     extract_tokens,
@@ -9,21 +8,18 @@ from molgenis_flwr_armadillo.helpers import (
     list_resources,
     load_data,
 )
-from molgenis_flwr_armadillo.strategy import MolgenisFedAvg
-
-# from molgenis_flwr_armadillo.run import run
+from molgenis_flwr_armadillo.signing import generate_keypair, sign_fab, verify_fab
 
 __all__ = [
-    "MolgenisFedAvg",
+    "generate_keypair",
+    "sign_fab",
+    "verify_fab",
     "authenticate",
     "check_access",
-    "discover_nodes",
     "extract_tokens",
     "get_node_token",
     "get_node_url",
-    "handle_discovery",
     "list_projects",
     "list_resources",
     "load_data",
-    "run",
 ]
