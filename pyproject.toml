@@ -29,7 +29,7 @@ dependencies = [
   "requests",
   "rich",
   "cryptography>=41.0.0",
-  "flwr>=1.23.0",
+  "flwr>=1.27.0",
   "grpcio>=1.60.0",
   "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
 ]

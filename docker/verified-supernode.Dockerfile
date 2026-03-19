@@ -1,4 +1,4 @@
-FROM flwr/supernode:1.23.0
+FROM flwr/supernode:1.27.0
 
 USER root
 COPY . /tmp/molgenis-flwr-armadillo

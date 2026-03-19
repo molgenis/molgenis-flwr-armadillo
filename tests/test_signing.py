@@ -18,7 +18,7 @@ class TestSignFab:
         priv, pub = generate_keypair()
         verifications = sign_fab(SAMPLE_FAB, priv)
         trusted = {derive_key_id(pub): pub}
-        assert verify_fab(SAMPLE_FAB, verifications, trusted) is True
+        assert verify_fab(SAMPLE_FAB, verifications, trusted) == "ok"
 
     def test_produces_valid_format(self):
         """Verifications dict has key_id → JSON with signature and signed_at."""
@@ -43,7 +43,9 @@ class TestSignFab:
         priv, pub = generate_keypair()
         verifications = sign_fab(SAMPLE_FAB, priv)
         trusted = {derive_key_id(pub): pub}
-        assert verify_fab(b"tampered-content", verifications, trusted) is False
+        result = verify_fab(b"tampered-content", verifications, trusted)
+        assert result != "ok"
+        assert "signature invalid" in result
 
     def test_rejects_untrusted_signer(self):
         """Signing with key A, verifying with key B fails."""
@@ -51,13 +53,17 @@ class TestSignFab:
         _, pub_b = generate_keypair()
         verifications = sign_fab(SAMPLE_FAB, priv_a)
         trusted = {derive_key_id(pub_b): pub_b}
-        assert verify_fab(SAMPLE_FAB, verifications, trusted) is False
+        result = verify_fab(SAMPLE_FAB, verifications, trusted)
+        assert result != "ok"
+        assert "no trusted key matched" in result
 
     def test_rejects_empty_verifications(self):
         """Empty verifications dict is always rejected."""
         _, pub = generate_keypair()
         trusted = {derive_key_id(pub): pub}
-        assert verify_fab(SAMPLE_FAB, {}, trusted) is False
+        result = verify_fab(SAMPLE_FAB, {}, trusted)
+        assert result != "ok"
+        assert "no verifications provided" in result
 
     def test_derive_key_id_deterministic(self):
         """Same public key always produces the same key ID."""

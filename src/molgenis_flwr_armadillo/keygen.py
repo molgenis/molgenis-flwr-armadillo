@@ -4,9 +4,12 @@ Usage:
     molgenis-flwr-keygen --name <name>
 
 Output:
-    <name>.key  — private key (PEM)
-    <name>.pub  — public key (PEM)
+    <name>.key  — private key (PEM, for signing FABs)
+    <name>.pub  — public key (SSH format, for trusted-entities.yaml)
     Prints the derived key_id to stdout.
+
+The public key is written in OpenSSH format because Flower's native
+``--trusted-entities`` verification uses ``load_ssh_public_key``.
 """
 
 from __future__ import annotations
@@ -25,16 +28,16 @@ from molgenis_flwr_armadillo.signing import derive_key_id, generate_keypair
 
 
 def keygen(name: str) -> str:
-    """Generate keypair, write PEM files, return key_id."""
+    """Generate keypair, write key files, return key_id."""
     private_key, public_key = generate_keypair()
 
     priv_pem = private_key.private_bytes(
         Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
     )
-    pub_pem = public_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    pub_ssh = public_key.public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH)
 
     Path(f"{name}.key").write_bytes(priv_pem)
-    Path(f"{name}.pub").write_bytes(pub_pem)
+    Path(f"{name}.pub").write_bytes(pub_ssh)
 
     return derive_key_id(public_key)
 

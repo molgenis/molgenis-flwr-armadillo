@@ -73,35 +73,46 @@ def verify_fab(
     fab_content: bytes,
     verifications: dict[str, str],
     trusted_keys: dict[str, Ed25519PublicKey],
-) -> bool:
+) -> str:
     """Verify a FAB against trusted public keys.
 
-    Returns True if at least one trusted key produced a valid signature
-    over the FAB content.
+    Returns ``"ok"`` if at least one trusted key produced a valid
+    signature, or a human-readable reason string on failure.
     """
     if not verifications:
-        return False
+        return "no verifications provided (unsigned FAB)"
 
+    # Collect key IDs present in the FAB for diagnostics
+    fab_key_ids = [k for k in verifications if k != "valid_license"]
+
+    matched_any = False
     for key_id, public_key in trusted_keys.items():
         payload = verifications.get(key_id)
         if payload is None:
             continue
 
+        matched_any = True
         try:
             data = json.loads(payload)
             sig_bytes = base64.urlsafe_b64decode(data["signature"])
             timestamp = data["signed_at"]
         except (json.JSONDecodeError, KeyError, Exception):
-            continue
+            return f"malformed verification payload for key {key_id}"
 
         message = _build_message(fab_content, timestamp)
         try:
             public_key.verify(sig_bytes, message)
-            return True
+            return "ok"
         except Exception:
-            continue
+            return f"signature invalid for trusted key {key_id}"
 
-    return False
+    if not matched_any:
+        return (
+            f"no trusted key matched: FAB signed by {fab_key_ids}, "
+            f"trusted keys are {list(trusted_keys.keys())}"
+        )
+
+    return "verification failed"
 
 
 # ── helpers ──────────────────────────────────────────────────────────
