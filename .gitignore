@@ -31,3 +31,6 @@ flwr_tokens.json
 
 # Temp files
 .flwr/
+
+# Copied into build context by docker build scripts
+molgenis-python-auth/
