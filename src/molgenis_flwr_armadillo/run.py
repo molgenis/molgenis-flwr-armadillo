@@ -18,7 +18,7 @@ import grpc
 from flwr.common.config import parse_config_args
 from flwr.common.serde import fab_to_proto, user_config_to_proto
 from flwr.common.typing import Fab
-from flwr.proto.control_pb2 import StartRunRequest
+from flwr.proto.control_pb2 import StartRunRequest, StreamLogsRequest
 from flwr.proto.control_pb2_grpc import ControlStub
 from rich.console import Console
 
@@ -29,10 +29,12 @@ def submit_signed_fab(
     sfab_path: str,
     federation_address: str,
     config_overrides: list[str] | None = None,
+    stream: bool = False,
 ) -> int:
     """Load pre-signed FAB and submit to SuperLink via gRPC.
 
     Returns the run_id assigned by the SuperLink.
+    If stream=True, streams logs to stdout until the run finishes.
     """
     with open(sfab_path) as f:
         sfab = json.load(f)
@@ -50,8 +52,24 @@ def submit_signed_fab(
         override_config=user_config_to_proto(override_config),
     )
     res = stub.StartRun(req)
+    run_id = res.run_id
+
+    if stream and run_id:
+        console.print(f"[green]Run started with ID: {run_id}[/green]")
+        console.print("Streaming logs...")
+        try:
+            log_stream = stub.StreamLogs(StreamLogsRequest(run_id=run_id))
+            for response in log_stream:
+                if response.log_output:
+                    print(response.log_output, end="", flush=True)
+        except grpc.RpcError as e:
+            if e.code() != grpc.StatusCode.CANCELLED:
+                console.print(f"[red]Log stream error: {e.code().name}[/red]")
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Stream interrupted.[/yellow]")
+
     channel.close()
-    return res.run_id
+    return run_id
 
 
 def main() -> None:
@@ -71,6 +89,11 @@ def main() -> None:
         nargs="*",
         help="Config overrides (e.g. 'key1=\"val1\" key2=123')",
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream run logs to stdout until the run finishes",
+    )
     args = parser.parse_args()
 
     console.print(f"Submitting signed FAB: [cyan]{args.signed_fab}[/cyan]")
@@ -78,13 +101,15 @@ def main() -> None:
 
     try:
         run_id = submit_signed_fab(
-            args.signed_fab, args.federation_address, args.run_config
+            args.signed_fab, args.federation_address, args.run_config,
+            stream=args.stream,
         )
     except grpc.RpcError as e:
         console.print(f"[red]gRPC error: {e.code().name} — {e.details()}[/red]")
         sys.exit(1)
 
-    console.print(f"[green]Run started with ID: {run_id}[/green]")
+    if not args.stream:
+        console.print(f"[green]Run started with ID: {run_id}[/green]")
 
 
 if __name__ == "__main__":

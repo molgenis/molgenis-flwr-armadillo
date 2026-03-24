@@ -18,6 +18,12 @@ docker build --no-cache \
   -t "$DOCKER_HUB_USER/verified-superlink:test" \
   "$PROJECT_ROOT"
 
+echo "Building verified-supernode..."
+docker build --no-cache \
+  -f "$SCRIPT_DIR/verified-supernode.Dockerfile" \
+  -t "$DOCKER_HUB_USER/verified-supernode:test" \
+  "$PROJECT_ROOT"
+
 echo "Building superexec-data-test..."
 docker build --no-cache \
   -f "$PROJECT_ROOT/examples/docker/superexec.Dockerfile" \
@@ -26,6 +32,7 @@ docker build --no-cache \
 
 echo "Pushing images..."
 docker push "$DOCKER_HUB_USER/verified-superlink:test"
+docker push "$DOCKER_HUB_USER/verified-supernode:test"
 docker push "$DOCKER_HUB_USER/superexec-data-test:0.0.1"
 
 echo "Done."
