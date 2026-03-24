@@ -290,7 +290,7 @@ def load_data(url: str, token: str, project: str, resource: str) -> bytes:
     filename = project + "_" + resource.replace("/", "_")
     filepath = DATA_DIR / filename
 
-    timeout = 30
+    timeout = 300
     start = time.monotonic()
     while not filepath.exists():
         if time.monotonic() - start > timeout:
