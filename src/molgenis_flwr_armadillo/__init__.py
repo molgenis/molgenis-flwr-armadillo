@@ -8,12 +8,8 @@ from molgenis_flwr_armadillo.helpers import (
     list_resources,
     load_data,
 )
-from molgenis_flwr_armadillo.signing import generate_keypair, sign_fab, verify_fab
 
 __all__ = [
-    "generate_keypair",
-    "sign_fab",
-    "verify_fab",
     "authenticate",
     "check_access",
     "extract_tokens",

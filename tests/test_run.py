@@ -1,177 +1,93 @@
-"""Tests for submit_signed_fab and CLI."""
+"""Tests for flwr run wrapper."""
 
-import base64
-import json
-import os
-import tempfile
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-def _make_sfab(fab_hash="abc123", fab_content=b"fake-fab", verifications=None):
-    """Create a temporary .sfab file and return its path."""
-    if verifications is None:
-        verifications = {"fpk_test1234": '{"signature": "sig", "signed_at": 100}'}
-
-    sfab = {
-        "fab_hash": fab_hash,
-        "fab_content": base64.b64encode(fab_content).decode(),
-        "verifications": verifications,
-    }
-    fd, path = tempfile.mkstemp(suffix=".sfab")
-    with os.fdopen(fd, "w") as f:
-        json.dump(sfab, f)
-    return path
+FAKE_TOKENS = {
+    "token-node1": "eyJtoken1",
+    "url-node1": "https://node1.example.com",
+    "token-node2": "eyJtoken2",
+    "url-node2": "https://node2.example.com",
+}
 
 
-class TestSubmitSignedFab:
-    """Tests for submit_signed_fab function."""
+class TestBuildCommand:
+    """Tests for build_command."""
 
-    @patch("molgenis_flwr_armadillo.run.grpc")
-    def test_loads_sfab_and_submits(self, mock_grpc):
-        """Should load .sfab, create Fab, and call StartRun."""
-        from molgenis_flwr_armadillo.run import submit_signed_fab
+    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
+    def test_builds_flwr_run_with_tokens(self, mock_load):
+        from molgenis_flwr_armadillo.run import build_command
 
-        mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
-        mock_stub = MagicMock()
-        mock_stub.StartRun.return_value = MagicMock(run_id=42)
+        cmd = build_command([])
+        assert cmd[0:2] == ["flwr", "run"]
+        assert "--run-config" in cmd
+        config_str = cmd[cmd.index("--run-config") + 1]
+        assert 'token-node1="eyJtoken1"' in config_str
+        assert 'url-node1="https://node1.example.com"' in config_str
 
-        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
-            sfab_path = _make_sfab()
-            try:
-                run_id = submit_signed_fab(sfab_path, "localhost:9093")
-            finally:
-                os.unlink(sfab_path)
+    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
+    def test_forwards_user_args(self, mock_load):
+        from molgenis_flwr_armadillo.run import build_command
 
-        assert run_id == 42
-        mock_grpc.insecure_channel.assert_called_once_with("localhost:9093")
-        mock_stub.StartRun.assert_called_once()
+        cmd = build_command([".", "federation", "--stream"])
+        assert cmd[2:5] == [".", "federation", "--stream"]
 
-    @patch("molgenis_flwr_armadillo.run.grpc")
-    def test_passes_config_overrides(self, mock_grpc):
-        """Should parse and pass config overrides."""
-        from molgenis_flwr_armadillo.run import submit_signed_fab
-
-        mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
-        mock_stub = MagicMock()
-        mock_stub.StartRun.return_value = MagicMock(run_id=1)
-
-        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
-            with patch("molgenis_flwr_armadillo.run.parse_config_args") as mock_parse:
-                mock_parse.return_value = {"key": "val"}
-                sfab_path = _make_sfab()
-                try:
-                    submit_signed_fab(
-                        sfab_path, "localhost:9093", ['key="val"']
-                    )
-                finally:
-                    os.unlink(sfab_path)
-
-                mock_parse.assert_called_once_with(['key="val"'])
-
-    @patch("molgenis_flwr_armadillo.run.grpc")
-    def test_decodes_fab_content(self, mock_grpc):
-        """Should base64-decode fab_content from .sfab."""
-        from molgenis_flwr_armadillo.run import submit_signed_fab
-
-        mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
-        mock_stub = MagicMock()
-        mock_stub.StartRun.return_value = MagicMock(run_id=1)
-
-        original_content = b"real-fab-bytes-here"
-
-        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
-            with patch("molgenis_flwr_armadillo.run.fab_to_proto") as mock_fab_to_proto:
-                mock_fab_to_proto.return_value = MagicMock()
-                with patch("molgenis_flwr_armadillo.run.StartRunRequest"):
-                    sfab_path = _make_sfab(fab_content=original_content)
-                    try:
-                        submit_signed_fab(sfab_path, "localhost:9093")
-                    finally:
-                        os.unlink(sfab_path)
-
-                    # Check the Fab passed to fab_to_proto has decoded content
-                    fab_arg = mock_fab_to_proto.call_args[0][0]
-                    assert fab_arg.content == original_content
-
-    @patch("molgenis_flwr_armadillo.run.grpc")
-    def test_closes_channel(self, mock_grpc):
-        """Should close the gRPC channel after use."""
-        from molgenis_flwr_armadillo.run import submit_signed_fab
-
-        mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
-        mock_stub = MagicMock()
-        mock_stub.StartRun.return_value = MagicMock(run_id=1)
-
-        with patch("molgenis_flwr_armadillo.run.ControlStub", return_value=mock_stub):
-            sfab_path = _make_sfab()
-            try:
-                submit_signed_fab(sfab_path, "localhost:9093")
-            finally:
-                os.unlink(sfab_path)
-
-        mock_channel.close.assert_called_once()
-
-    def test_raises_on_missing_sfab(self):
-        """Should raise FileNotFoundError for missing .sfab file."""
-        from molgenis_flwr_armadillo.run import submit_signed_fab
+    @patch(
+        "molgenis_flwr_armadillo.run.load_tokens",
+        side_effect=FileNotFoundError("No tokens found"),
+    )
+    def test_raises_when_no_tokens(self, mock_load):
+        from molgenis_flwr_armadillo.run import build_command
 
         with pytest.raises(FileNotFoundError):
-            submit_signed_fab("/nonexistent/path.sfab", "localhost:9093")
+            build_command([])
 
 
 class TestMain:
     """Tests for main CLI entry point."""
 
-    @patch("molgenis_flwr_armadillo.run.submit_signed_fab")
+    @patch("molgenis_flwr_armadillo.run.subprocess.run")
+    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     @patch("molgenis_flwr_armadillo.run.console")
-    def test_parses_required_args(self, mock_console, mock_submit):
-        """Should parse --signed-fab and --federation-address."""
+    def test_calls_flwr_run(self, mock_console, mock_load, mock_run):
         from molgenis_flwr_armadillo.run import main
-        import sys
 
-        mock_submit.return_value = 42
-        sfab_path = _make_sfab()
+        mock_run.return_value = MagicMock(returncode=0)
 
-        try:
-            with patch.object(
-                sys,
-                "argv",
-                ["prog", "--signed-fab", sfab_path, "--federation-address", "host:9093"],
-            ):
+        with patch.object(sys, "argv", ["prog", ".", "fed1"]):
+            with pytest.raises(SystemExit) as exc_info:
                 main()
-        finally:
-            os.unlink(sfab_path)
+            assert exc_info.value.code == 0
 
-        mock_submit.assert_called_once_with(sfab_path, "host:9093", None)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0:2] == ["flwr", "run"]
 
-    @patch("molgenis_flwr_armadillo.run.submit_signed_fab")
+    @patch("molgenis_flwr_armadillo.run.subprocess.run")
+    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     @patch("molgenis_flwr_armadillo.run.console")
-    def test_handles_grpc_error(self, mock_console, mock_submit):
-        """Should exit 1 on gRPC error."""
+    def test_propagates_return_code(self, mock_console, mock_load, mock_run):
         from molgenis_flwr_armadillo.run import main
-        import sys
-        import grpc
 
-        error = grpc.RpcError()
-        error.code = lambda: grpc.StatusCode.PERMISSION_DENIED
-        error.details = lambda: "FAB not signed"
-        mock_submit.side_effect = error
+        mock_run.return_value = MagicMock(returncode=1)
 
-        sfab_path = _make_sfab()
-        try:
-            with patch.object(
-                sys,
-                "argv",
-                ["prog", "--signed-fab", sfab_path, "--federation-address", "host:9093"],
-            ):
-                with pytest.raises(SystemExit) as exc_info:
-                    main()
-                assert exc_info.value.code == 1
-        finally:
-            os.unlink(sfab_path)
+        with patch.object(sys, "argv", ["prog"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+    @patch(
+        "molgenis_flwr_armadillo.run.load_tokens",
+        side_effect=FileNotFoundError("No tokens found"),
+    )
+    @patch("molgenis_flwr_armadillo.run.console")
+    def test_exits_on_missing_tokens(self, mock_console, mock_load):
+        from molgenis_flwr_armadillo.run import main
+
+        with patch.object(sys, "argv", ["prog"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
