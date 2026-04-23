@@ -81,9 +81,9 @@ exclude_lines = [
 ]
 
 [project.scripts]
-molgenis-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
-molgenis-flwr-resources = "molgenis_flwr_armadillo.resources:main"
-molgenis-flwr-run = "molgenis_flwr_armadillo.run:main"
+armadillo-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
+armadillo-flwr-resources = "molgenis_flwr_armadillo.resources:main"
+armadillo-flwr-run = "molgenis_flwr_armadillo.run:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/molgenis_flwr_armadillo"]

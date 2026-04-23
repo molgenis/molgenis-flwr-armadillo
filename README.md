@@ -16,10 +16,10 @@ pip install -e .
 
 ```bash
 # 1. Authenticate to all nodes (opens browser for each)
-molgenis-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
+armadillo-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
 
 # 2. Run the Flower app with tokens automatically injected
-molgenis-flwr-run --app-dir examples/quickstart-pytorch
+armadillo-flwr-run --app-dir examples/quickstart-pytorch
 ```
 
 ## Configuration Flow
@@ -92,10 +92,10 @@ The researcher must use matching names in `flower-nodes.yaml` and `pyproject.tom
 ```
 User                    SuperLink              SuperNode
   │                         │                      │
-  │ molgenis-flwr-authenticate                     │
+  │ armadillo-flwr-authenticate                     │
   │ (opens browser for each node)                  │
   │                         │                      │
-  │ molgenis-flwr-run       │                      │
+  │ armadillo-flwr-run       │                      │
   │ ───────────────────────>│                      │
   │ (tokens in --run-config)│                      │
   │                         │                      │
@@ -188,10 +188,10 @@ docker compose up -d
 
 # 3. Authenticate
 cd ../..
-molgenis-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
+armadillo-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
 
 # 4. Run
-molgenis-flwr-run --app-dir examples/quickstart-pytorch
+armadillo-flwr-run --app-dir examples/quickstart-pytorch
 
 # 5. View logs
 docker compose logs -f

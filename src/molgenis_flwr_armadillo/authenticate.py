@@ -101,7 +101,7 @@ def save_tokens(tokens: dict) -> None:
 def load_tokens() -> dict:
     """Load tokens from temp file."""
     if not TOKEN_FILE.exists():
-        raise FileNotFoundError("No tokens found. Run 'molgenis-flwr-authenticate' first.")
+        raise FileNotFoundError("No tokens found. Run 'armadillo-flwr-authenticate' first.")
 
     with open(TOKEN_FILE) as f:
         return json.load(f)
@@ -122,6 +122,6 @@ def main():
 
     authenticate(args.config)
 
-    console.print("\n[green]Ready to run:[/green] molgenis-flwr-run")
+    console.print("\n[green]Ready to run:[/green] armadillo-flwr-run")
 
 

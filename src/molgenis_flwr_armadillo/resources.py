@@ -13,7 +13,7 @@ console = Console()
 
 
 def main():
-    """CLI entry point for molgenis-flwr-resources."""
+    """CLI entry point for armadillo-flwr-resources."""
     parser = argparse.ArgumentParser(
         description="List projects and resources accessible on Armadillo nodes"
     )

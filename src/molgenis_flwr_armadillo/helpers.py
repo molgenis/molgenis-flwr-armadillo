@@ -75,7 +75,7 @@ def get_node_token(msg: Message, context: Context) -> str:
         raise RuntimeError(
             f"No token found for node '{node_name}'. "
             f"Check that run-config includes 'token-{node_name}'. "
-            f"Re-run molgenis-flwr-authenticate if tokens have expired."
+            f"Re-run armadillo-flwr-authenticate if tokens have expired."
         )
     return token
 
@@ -137,7 +137,7 @@ def _request(method: str, url: str, token: str, path: str, **kwargs):
             raise RuntimeError(
                 f"Authentication failed (HTTP 401) from {endpoint}. "
                 f"The OIDC token may have expired. "
-                f"Re-run molgenis-flwr-authenticate to get a new token."
+                f"Re-run armadillo-flwr-authenticate to get a new token."
             ) from e
         elif status == 403:
             raise RuntimeError(

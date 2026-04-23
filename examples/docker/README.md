@@ -44,7 +44,7 @@ This starts:
 
 ```bash
 cd ../..
-molgenis-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
+armadillo-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
 ```
 
 This opens a browser for each node to authenticate via OAuth.
@@ -52,7 +52,7 @@ This opens a browser for each node to authenticate via OAuth.
 ### 4. Run the Flower app
 
 ```bash
-molgenis-flwr-run --app-dir examples/quickstart-pytorch
+armadillo-flwr-run --app-dir examples/quickstart-pytorch
 ```
 
 ### 5. View logs

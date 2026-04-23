@@ -1,9 +1,9 @@
 """Wrapper around ``flwr run`` that injects Armadillo auth tokens.
 
 Usage:
-    molgenis-flwr-run [flwr run arguments...]
+    armadillo-flwr-run [flwr run arguments...]
 
-Loads tokens saved by ``molgenis-flwr-authenticate`` and passes them
+Loads tokens saved by ``armadillo-flwr-authenticate`` and passes them
 as --run-config overrides to ``flwr run``.
 """
 
@@ -35,7 +35,7 @@ def main() -> None:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
-    console.print("[dim]Injecting tokens from molgenis-flwr-authenticate[/dim]")
+    console.print("[dim]Injecting tokens from armadillo-flwr-authenticate[/dim]")
     result = subprocess.run(cmd)
     sys.exit(result.returncode)
 
