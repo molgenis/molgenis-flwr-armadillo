@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flower-tutorial"
+version = "1.0.0"
+description = "Federated CIFAR-10 with PyTorch, Flower, and Armadillo"
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.23.0",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "molgenis-flwr-armadillo @ git+https://github.com/molgenis/molgenis-flwr-armadillo.git",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "flwrlabs"
+
+[tool.flwr.app.components]
+serverapp = "flower_tutorial.server_app:app"
+clientapp = "flower_tutorial.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 1
+fraction-train = 0.5
+local-epochs = 1
+lr = 0.01
+token-armadillo-demo-molgenis-net = ""
+token-armadillo-dev-molgenis-org = ""
+
+[tool.flwr.federations]
+default = "local-deployment"
+
+[tool.flwr.federations.local-deployment]
+address = "127.0.0.1:9093"
+insecure = true
