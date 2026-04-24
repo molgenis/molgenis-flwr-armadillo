@@ -11,6 +11,8 @@ from molgenis_auth import MolgenisAuthClient
 from rich.console import Console
 from rich.table import Table
 
+from molgenis_flwr_armadillo.helpers import sanitize_url
+
 # Console for styled output
 console = Console()
 
@@ -39,10 +41,10 @@ def authenticate(config_path: str) -> dict:
     Load node config and authenticate to each node.
 
     Args:
-        config_path: Path to YAML config file with node definitions
+        config_path: Path to YAML config file with list of Armadillo URLs
 
     Returns:
-        Dictionary of {token-nodename: token_value}
+        Dictionary of {token-<sanitized-url>: token_value}
     """
     # Load config
     with open(config_path) as f:
@@ -50,16 +52,15 @@ def authenticate(config_path: str) -> dict:
 
     tokens = {}
 
-    for node_name, node_config in config["nodes"].items():
-        console.rule(f"[bold blue]{node_name}[/bold blue]")
-
-        # Get auth info from Armadillo server
-        url = node_config["url"]
+    for url in config["urls"]:
+        key = sanitize_url(url)
+        console.rule(f"[bold blue]{url}[/bold blue]")
 
         with console.status(f"Fetching auth info from {url}..."):
             auth_info = get_auth_info(url)
 
         console.print(f"  URL: [cyan]{url}[/cyan]")
+        console.print(f"  Key: [cyan]{key}[/cyan]")
         console.print(f"  Auth server: [cyan]{auth_info['issuerUri']}[/cyan]")
 
         # Authenticate using discovered settings
@@ -72,20 +73,19 @@ def authenticate(config_path: str) -> dict:
         console.print("  [yellow]Opening browser for authentication...[/yellow]")
         auth_result = client.device_flow_auth()
 
-        tokens[f"token-{node_name}"] = auth_result["access_token"]
-        tokens[f"url-{node_name}"] = url
-        console.print(f"  [green]✓ {node_name} authenticated[/green]")
+        tokens[f"token-{key}"] = auth_result["access_token"]
+        console.print(f"  [green]✓ {url} authenticated[/green]")
 
     save_tokens(tokens)
 
     # Summary table
     console.print()
     table = Table(title="Authenticated Nodes")
-    table.add_column("Node", style="cyan")
+    table.add_column("URL", style="cyan")
+    table.add_column("Key", style="dim")
     table.add_column("Status", style="green")
-    for key in tokens.keys():
-        node = key.replace("token-", "")
-        table.add_row(node, "✓ Ready")
+    for url in config["urls"]:
+        table.add_row(url, sanitize_url(url), "✓ Ready")
     console.print(table)
 
     return tokens

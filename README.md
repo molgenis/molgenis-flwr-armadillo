@@ -16,48 +16,42 @@ pip install -e .
 
 ```bash
 # 1. Authenticate to all nodes (opens browser for each)
-armadillo-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
+armadillo-flwr-authenticate --config flower-nodes.yaml
 
 # 2. Run the Flower app with tokens automatically injected
-armadillo-flwr-run --app-dir examples/quickstart-pytorch
+armadillo-flwr-run .
 ```
 
 ## Configuration Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           NAME ALIGNMENT REQUIRED                           │
-│                                                                             │
-│  flower-nodes.yaml    →    pyproject.toml    →    SuperNode startup        │
-│  (researcher config)       (app config)           (specified by each site) │
-│                                                                             │
-│  nodes:                    [tool.flwr.app.config]  flower-supernode \       │
-│    demo:                   token-demo = ""           --node-config \        │
-│    localhost:              token-localhost = ""      'node-name="demo"'     │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           URL-BASED TOKEN ROUTING                            │
+│                                                                              │
+│  flower-nodes.yaml    →    pyproject.toml    →    Container env var         │
+│  (researcher config)       (app config)           (set by Armadillo)       │
+│                                                                              │
+│  urls:                     [tool.flwr.app.config]  ARMADILLO_URL=           │
+│    - "https://demo..."     token-demo-...= ""        "https://demo..."     │
+│    - "https://dev..."      token-dev-... = ""                               │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**All three must use the same node names!**
-
-In production, each site configures their `node-name` in the Armadillo UI. The site admin sets this when setting up their Armadillo instance for federated learning.
+URLs are sanitized into safe config keys automatically (e.g.
+`https://armadillo-demo.molgenis.net` becomes `armadillo-demo-molgenis-net`).
+Armadillo injects its URL into the container via the `ARMADILLO_URL` environment variable.
 
 ## File Configuration
 
 ### 1. `flower-nodes.yaml` - Define your Armadillo servers
 
-Save this in your Flower app directory (e.g., `examples/quickstart-pytorch/flower-nodes.yaml`):
+Save this in your Flower app directory:
 
 ```yaml
-nodes:
-  demo:
-    url: "https://armadillo-demo.molgenis.net"
-  localhost:
-    url: "https://armadillo.dev.molgenis.org"
+urls:
+  - "https://armadillo-demo.molgenis.net"
+  - "https://armadillo.dev.molgenis.org"
 ```
-
-The node names (`demo`, `localhost`) are used to:
-- Name the tokens (`token-demo`, `token-localhost`)
-- Match with SuperNode `node-name` configuration
 
 ### 2. `pyproject.toml` - App configuration (in your Flower app)
 
@@ -68,8 +62,8 @@ fraction-evaluate = 0.5
 local-epochs = 1
 learning-rate = 0.1
 batch-size = 32
-token-demo = ""
-token-localhost = ""
+token-armadillo-demo-molgenis-net = ""
+token-armadillo-dev-molgenis-org = ""
 
 [tool.flwr.federations]
 default = "local-deployment"
@@ -79,13 +73,13 @@ address = "127.0.0.1:9093"
 insecure = true
 ```
 
-**Important:** Token keys must match node names from `flower-nodes.yaml`.
+Token keys are derived from the URL using `sanitize_url()`. Run
+`python -c "from molgenis_flwr_armadillo import sanitize_url; print(sanitize_url('YOUR_URL'))"` to check.
 
-### 3. SuperNode `node-name` - Configured by each site
+### 3. `ARMADILLO_URL` - Set by Armadillo
 
-In production, each site's Armadillo admin configures their `node-name` in the Armadillo UI. This is set once when the site joins the federation.
-
-The researcher must use matching names in `flower-nodes.yaml` and `pyproject.toml`.
+Armadillo injects its URL into each container via the `ARMADILLO_URL`
+environment variable. No manual configuration needed.
 
 ## Token Flow
 
@@ -93,7 +87,7 @@ The researcher must use matching names in `flower-nodes.yaml` and `pyproject.tom
 User                    SuperLink              SuperNode
   │                         │                      │
   │ armadillo-flwr-authenticate                     │
-  │ (opens browser for each node)                  │
+  │ (opens browser for each URL)                   │
   │                         │                      │
   │ armadillo-flwr-run       │                      │
   │ ───────────────────────>│                      │
@@ -108,8 +102,10 @@ User                    SuperLink              SuperNode
   │                         │─────────────────────>│
   │                         │                      │
   │                         │               ClientApp
-  │                         │               extracts token
-  │                         │               by node-name
+  │                         │               reads ARMADILLO_URL
+  │                         │               from environment
+  │                         │               matches token by
+  │                         │               sanitized URL
   │                         │                      │
 ```
 
@@ -122,13 +118,8 @@ The server must forward tokens to clients via ConfigRecord:
 ```python
 @app.main()
 def main(grid: Grid, context: Context) -> None:
-    # Read config
     lr: float = context.run_config["learning-rate"]
-
-    # Collect all tokens to pass to clients
-    tokens = {k: v for k, v in context.run_config.items() if k.startswith("token-")}
-
-    # Build train config with tokens
+    tokens = extract_tokens(context)
     train_config = {"lr": lr, **tokens}
 
     result = strategy.start(
@@ -141,79 +132,40 @@ def main(grid: Grid, context: Context) -> None:
 
 ### client_app.py
 
-Each client extracts its token based on its node-name:
+Each client reads its URL from the environment and matches its token:
 
 ```python
 @app.train()
 def train(msg: Message, context: Context):
-    # Read token based on node name (passed via ConfigRecord from server)
-    node_name = context.node_config["node-name"]
-    token = msg.content["config"].get(f"token-{node_name}", "")
-    print(f"[{node_name}] Using token: {token[:50]}...")
-
-    # Use token to authenticate with Armadillo data source
+    token = get_node_token(msg)
+    url = get_node_url()
+    # Use token + url to authenticate with Armadillo
     # ...
 ```
 
 ## Running Locally with Docker
 
-For local testing, use Docker Compose to simulate the SuperNodes. The `node-name` is set via command line args (in production this is configured in the Armadillo UI).
+For local testing, use Docker Compose to simulate the containers.
+Each container needs `ARMADILLO_URL` set as an environment variable.
 
-See `examples/docker/` for the full setup. The key configuration is:
-
-```yaml
-supernode-demo:
-  image: flwr/supernode:1.23.0
-  command:
-    - --insecure
-    - --superlink=superlink:9092
-    - --node-config
-    - 'partition-id=0 num-partitions=2 node-name="demo"'
-    - --clientappio-api-address=0.0.0.0:9094
-    - --isolation=process
-```
-
-**Important:** `node-name` must match the names in `flower-nodes.yaml` and `pyproject.toml`.
-
-### Quick start
-
-```bash
-# 1. Build the client app image
-cd examples/quickstart-pytorch
-docker build -f superexec.Dockerfile -t superexec-test:1.0.0 .
-
-# 2. Start the infrastructure
-cd ../docker
-docker compose up -d
-
-# 3. Authenticate
-cd ../..
-armadillo-flwr-authenticate --config examples/quickstart-pytorch/flower-nodes.yaml
-
-# 4. Run
-armadillo-flwr-run --app-dir examples/quickstart-pytorch
-
-# 5. View logs
-docker compose logs -f
-
-# 6. Stop
-docker compose down
-```
+See the [flower-examples](https://github.com/molgenis/flower-examples) repo for Docker Compose setup and example apps.
 
 ## Troubleshooting
 
 ### "Key 'token-xxx' is not present in the main dictionary"
-The token key in `--run-config` doesn't exist in `pyproject.toml`. Add it:
+The token key in `--run-config` doesn't exist in `pyproject.toml`. Add the
+sanitized URL key:
 ```toml
 [tool.flwr.app.config]
-token-xxx = ""
+token-armadillo-demo-molgenis-net = ""
 ```
 
-### "KeyError: 'node-name'"
-You're running in simulation mode which doesn't support `node-name`. Use deployment mode instead (docker-compose).
+### "ARMADILLO_URL environment variable not set"
+The container was not started with `ARMADILLO_URL` set.
+In production, Armadillo injects this automatically.
 
 ### Tokens showing as empty
-Check that node names match:
-- `flower-nodes.yaml` node names
-- `pyproject.toml` token keys
-- SuperNode `node-name` (configured in Armadillo UI, or docker-compose for local testing)
+Check that:
+- `flower-nodes.yaml` URLs match the Armadillo server URLs
+- `pyproject.toml` token keys match the sanitized URLs
+- Container has `ARMADILLO_URL` set as an environment variable

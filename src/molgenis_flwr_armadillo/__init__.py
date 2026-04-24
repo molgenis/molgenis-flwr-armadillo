@@ -7,6 +7,7 @@ from molgenis_flwr_armadillo.helpers import (
     list_projects,
     list_resources,
     load_data,
+    sanitize_url,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "list_projects",
     "list_resources",
     "load_data",
+    "sanitize_url",
 ]

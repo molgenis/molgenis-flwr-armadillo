@@ -1,56 +1,25 @@
-"""pytorchexample: A Flower / PyTorch app."""
+"""flower-tutorial: A Flower / PyTorch app."""
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
-from molgenis_flwr_armadillo import get_node_token
+from molgenis_flwr_armadillo import get_node_token, get_node_url
 
-from pytorchexample.task import Net, load_data
-from pytorchexample.task import test as test_fn
-from pytorchexample.task import train as train_fn
+from flower_tutorial.task import Net, load_data
+from flower_tutorial.task import test as test_fn
+from flower_tutorial.task import train as train_fn
 
 # Flower ClientApp
 app = ClientApp()
-
 
 @app.train()
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 
-    Login
-    assign.expr in python.
-
-    DSI for flower
-    Python part of armadillo
-
-    "flowerproject/data/cifar"
-
-    When assign-resource method is done, token is generated and put in resource file.
-    Rexecservice.impl load_resources
-
-    Secret is per resource file
-
-    Internal token created when resource is assigned
-
-    Get internal from OIDC token
-
-
-    get request
-    "rawfiles/flowerproject/data%2Fcifar"
-    auth_header with internal token
-
-
-    oidc_token <- extract_token()
-
-
-    Get: token_exchange endpoint
-    Get: rawfiles with this token
-
-
-    # Read token for this node (passed via ConfigRecord from server)
-    node_name = context.node_config["node-name"]
-    token = get_node_token(msg, context)
-    print(f"[{node_name}] Using token: {token[:50]}..." if token else f"[{node_name}] No token received")
+    # Get Armadillo token and URL for this node
+    token = get_node_token(msg)
+    url = get_node_url()
+    print(f"[{url}] Using token: {token[:50]}..." if token else f"[{url}] No token received")
 
     # Load the model and initialize it with the received weights
     model = Net()
@@ -58,11 +27,8 @@ def train(msg: Message, context: Context):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Load the data
-    partition_id = context.node_config["partition-id"]
-    num_partitions = context.node_config["num-partitions"]
-    batch_size = context.run_config["batch-size"]
-    trainloader, _ = load_data(partition_id, num_partitions, batch_size)
+    # Load data from Armadillo
+    trainloader, _ = load_data(url, token)
 
     # Call the training function
     train_loss = train_fn(
@@ -88,17 +54,18 @@ def train(msg: Message, context: Context):
 def evaluate(msg: Message, context: Context):
     """Evaluate the model on local data."""
 
+    # Get Armadillo token and URL for this node
+    token = get_node_token(msg)
+    url = get_node_url()
+
     # Load the model and initialize it with the received weights
     model = Net()
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Load the data
-    partition_id = context.node_config["partition-id"]
-    num_partitions = context.node_config["num-partitions"]
-    batch_size = context.run_config["batch-size"]
-    _, valloader = load_data(partition_id, num_partitions, batch_size)
+    # Load data from Armadillo
+    _, valloader = load_data(url, token)
 
     # Call the evaluation function
     eval_loss, eval_acc = test_fn(

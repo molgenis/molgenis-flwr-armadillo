@@ -1,5 +1,0 @@
-nodes:
-  demo:
-    url: "https://armadillo-demo.molgenis.net"
-  localhost:
-    url: "http://localhost:8080"

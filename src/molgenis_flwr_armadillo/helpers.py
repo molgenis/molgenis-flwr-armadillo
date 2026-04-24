@@ -1,6 +1,7 @@
 """Helper functions for Flower apps running with Armadillo."""
 
 import os
+import re
 import time
 from pathlib import Path
 
@@ -9,19 +10,48 @@ from flwr.app import Context, Message
 
 DATA_DIR = Path("/tmp/armadillo_data")
 CONTAINER_NAME = os.environ.get("ARMADILLO_CONTAINER_NAME", "")
+ARMADILLO_URL = os.environ.get("ARMADILLO_URL", "")
+
+
+def sanitize_url(url: str) -> str:
+    """Convert a URL into a safe key for use in Flower run config.
+
+    Strips the scheme and trailing slashes, lowercases, and replaces
+    non-alphanumeric characters with hyphens.
+
+    Args:
+        url: An Armadillo server URL
+
+    Returns:
+        A sanitized string safe for use as a config key,
+        e.g. "https://armadillo-demo.molgenis.net/" -> "armadillo-demo-molgenis-net"
+
+    Raises:
+        ValueError: If the URL is empty or sanitizes to an empty string
+    """
+    if not url:
+        raise ValueError("URL must not be empty")
+    key = url.lower()
+    key = re.sub(r"^https?://", "", key)
+    key = key.strip("/")
+    key = re.sub(r"[^a-z0-9]+", "-", key)
+    key = key.strip("-")
+    if not key:
+        raise ValueError(f"URL sanitizes to empty string: {url}")
+    return key
 
 
 def extract_tokens(context: Context) -> dict:
-    """Extract all tokens and URLs from run_config for passing to clients.
+    """Extract all tokens from run_config for passing to clients.
 
-    Use in server_app.py to collect tokens and URLs for the train_config.
+    Use in server_app.py to collect tokens for the train_config.
 
     Args:
         context: The Flower Context object
 
     Returns:
-        Dict of token/url keys to values,
-        e.g. {"token-demo": "eyJ...", "url-demo": "https://..."}
+        Dict of token keys to values,
+        e.g. {"token-armadillo-demo-molgenis-net": "eyJ..."}
 
     Example:
         from molgenis_flwr_armadillo import extract_tokens
@@ -36,85 +66,68 @@ def extract_tokens(context: Context) -> dict:
     return {
         k: v
         for k, v in context.run_config.items()
-        if k.startswith("token-") or k.startswith("url-")
+        if k.startswith("token-")
     }
 
 
-def get_node_token(msg: Message, context: Context) -> str:
-    """Extract this node's token from the message config.
+def get_node_url() -> str:
+    """Get this node's Armadillo URL from the ARMADILLO_URL environment variable.
 
-    Use in client_app.py to get the token for this specific node.
-
-    Args:
-        msg: The Flower Message received from the server
-        context: The Flower Context object
-
-    Returns:
-        The token string for this node
-
-    Raises:
-        RuntimeError: If node name is not configured or token is missing
-
-    Example:
-        from molgenis_flwr_armadillo import get_node_token
-
-        @app.train()
-        def train(msg: Message, context: Context):
-            token = get_node_token(msg, context)
-            data = fetch_from_armadillo(token)
-            # ...
-    """
-    node_name = context.node_config.get("node-name", "")
-    if not node_name:
-        raise RuntimeError(
-            "No 'node-name' found in node_config. "
-            "Check the supernode --node-config argument includes node-name."
-        )
-    token = msg.content.get("config", {}).get(f"token-{node_name}", "")
-    if not token:
-        raise RuntimeError(
-            f"No token found for node '{node_name}'. "
-            f"Check that run-config includes 'token-{node_name}'. "
-            f"Re-run armadillo-flwr-authenticate if tokens have expired."
-        )
-    return token
-
-
-def get_node_url(msg: Message, context: Context) -> str:
-    """Extract this node's Armadillo URL from the message config.
-
-    Use in client_app.py to get the Armadillo server URL for this node.
-
-    Args:
-        msg: The Flower Message received from the server
-        context: The Flower Context object
+    The URL is injected by Armadillo when starting the container.
 
     Returns:
         The Armadillo URL for this node
 
     Raises:
-        RuntimeError: If node name is not configured or URL is missing
+        RuntimeError: If ARMADILLO_URL is not set
 
     Example:
         from molgenis_flwr_armadillo import get_node_url
 
         @app.train()
         def train(msg: Message, context: Context):
-            url = get_node_url(msg, context)
+            url = get_node_url()
     """
-    node_name = context.node_config.get("node-name", "")
-    if not node_name:
+    if not ARMADILLO_URL:
         raise RuntimeError(
-            "No 'node-name' found in node_config. "
-            "Check the supernode --node-config argument includes node-name."
+            "ARMADILLO_URL environment variable not set. "
+            "Check that the container was started by Armadillo."
         )
-    url = msg.content.get("config", {}).get(f"url-{node_name}", "")
-    if not url:
+    return ARMADILLO_URL
+
+
+def get_node_token(msg: Message) -> str:
+    """Extract this node's token from the message config.
+
+    Uses the ARMADILLO_URL environment variable to find the matching token.
+
+    Args:
+        msg: The Flower Message received from the server
+
+    Returns:
+        The token string for this node
+
+    Raises:
+        RuntimeError: If ARMADILLO_URL is not set or token is missing
+
+    Example:
+        from molgenis_flwr_armadillo import get_node_token
+
+        @app.train()
+        def train(msg: Message, context: Context):
+            token = get_node_token(msg)
+            data = fetch_from_armadillo(token)
+            # ...
+    """
+    url = get_node_url()
+    key = sanitize_url(url)
+    token = msg.content.get("config", {}).get(f"token-{key}", "")
+    if not token:
         raise RuntimeError(
-            f"No URL found for node '{node_name}'. "
-            f"Check that run-config includes 'url-{node_name}'."
+            f"No token found for URL '{url}' (key: token-{key}). "
+            f"Re-run armadillo-flwr-authenticate if tokens have expired."
         )
-    return url
+    return token
 
 
 def _auth_headers(token: str) -> dict:

@@ -1,9 +1,57 @@
 """Tests for helper functions."""
 
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
-from molgenis_flwr_armadillo.helpers import extract_tokens, get_node_token, get_node_url, load_data
+from molgenis_flwr_armadillo.helpers import (
+    extract_tokens,
+    get_node_token,
+    get_node_url,
+    load_data,
+    sanitize_url,
+)
+
+
+class TestSanitizeUrl:
+    """Tests for sanitize_url function."""
+
+    def test_strips_https_scheme(self):
+        assert sanitize_url("https://armadillo-demo.molgenis.net") == "armadillo-demo-molgenis-net"
+
+    def test_strips_http_scheme(self):
+        assert sanitize_url("http://localhost:8080") == "localhost-8080"
+
+    def test_strips_trailing_slash(self):
+        assert sanitize_url("https://armadillo-demo.molgenis.net/") == "armadillo-demo-molgenis-net"
+
+    def test_lowercases(self):
+        assert sanitize_url("https://Armadillo-DEMO.Molgenis.NET") == "armadillo-demo-molgenis-net"
+
+    def test_replaces_dots_with_hyphens(self):
+        assert sanitize_url("https://armadillo.dev.molgenis.org") == "armadillo-dev-molgenis-org"
+
+    def test_collapses_multiple_special_chars(self):
+        assert sanitize_url("https://host...name") == "host-name"
+
+    def test_strips_leading_trailing_hyphens(self):
+        assert sanitize_url("https:///host/") == "host"
+
+    def test_raises_on_empty_string(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            sanitize_url("")
+
+    def test_raises_on_scheme_only(self):
+        with pytest.raises(ValueError, match="sanitizes to empty"):
+            sanitize_url("https://")
+
+    def test_preserves_port(self):
+        assert sanitize_url("https://localhost:9090") == "localhost-9090"
+
+    def test_consistent_results(self):
+        """Same URL with different formatting produces same key."""
+        assert sanitize_url("https://demo.molgenis.net") == sanitize_url("https://demo.molgenis.net/")
+        assert sanitize_url("http://demo.molgenis.net") == sanitize_url("https://demo.molgenis.net")
+        assert sanitize_url("HTTPS://Demo.Molgenis.NET") == sanitize_url("https://demo.molgenis.net")
 
 
 class TestExtractTokens:
@@ -15,56 +63,42 @@ class TestExtractTokens:
         context.run_config = {
             "learning-rate": 0.1,
             "batch-size": 32,
-            "token-demo": "abc123",
-            "token-localhost": "xyz789",
+            "token-armadillo-demo-molgenis-net": "abc123",
+            "token-localhost-8080": "xyz789",
         }
 
         result = extract_tokens(context)
 
         assert result == {
-            "token-demo": "abc123",
-            "token-localhost": "xyz789",
+            "token-armadillo-demo-molgenis-net": "abc123",
+            "token-localhost-8080": "xyz789",
         }
 
-    def test_extracts_url_keys(self):
-        """Should extract keys starting with 'url-' alongside tokens."""
+    def test_does_not_extract_url_keys(self):
+        """Should not extract url- keys (URLs come from node_config now)."""
         context = MagicMock()
         context.run_config = {
-            "learning-rate": 0.1,
-            "token-demo": "abc123",
+            "token-armadillo-demo-molgenis-net": "abc123",
             "url-demo": "https://armadillo-demo.molgenis.net",
         }
 
         result = extract_tokens(context)
 
-        assert result == {
-            "token-demo": "abc123",
-            "url-demo": "https://armadillo-demo.molgenis.net",
-        }
+        assert result == {"token-armadillo-demo-molgenis-net": "abc123"}
 
     def test_returns_empty_dict_when_no_tokens(self):
-        """Should return empty dict when no token keys exist."""
         context = MagicMock()
-        context.run_config = {
-            "learning-rate": 0.1,
-            "batch-size": 32,
-        }
+        context.run_config = {"learning-rate": 0.1}
 
-        result = extract_tokens(context)
-
-        assert result == {}
+        assert extract_tokens(context) == {}
 
     def test_handles_empty_run_config(self):
-        """Should handle empty run_config."""
         context = MagicMock()
         context.run_config = {}
 
-        result = extract_tokens(context)
-
-        assert result == {}
+        assert extract_tokens(context) == {}
 
     def test_does_not_extract_partial_matches(self):
-        """Should not extract keys that contain 'token' but don't start with 'token-'."""
         context = MagicMock()
         context.run_config = {
             "my-token": "should-not-match",
@@ -72,148 +106,87 @@ class TestExtractTokens:
             "token-demo": "should-match",
         }
 
-        result = extract_tokens(context)
-
-        assert result == {"token-demo": "should-match"}
-
-
-class TestGetNodeToken:
-    """Tests for get_node_token function."""
-
-    def test_extracts_correct_token_for_node(self):
-        """Should extract the token matching the node name."""
-        context = MagicMock()
-        context.node_config = {"node-name": "demo"}
-
-        msg = MagicMock()
-        msg.content = {
-            "config": {
-                "token-demo": "demo-token-value",
-                "token-localhost": "localhost-token-value",
-            }
-        }
-
-        result = get_node_token(msg, context)
-
-        assert result == "demo-token-value"
-
-    def test_returns_empty_string_when_token_not_found(self):
-        """Should return empty string when node's token doesn't exist."""
-        context = MagicMock()
-        context.node_config = {"node-name": "unknown-node"}
-
-        msg = MagicMock()
-        msg.content = {
-            "config": {
-                "token-demo": "demo-token-value",
-            }
-        }
-
-        result = get_node_token(msg, context)
-
-        assert result == ""
-
-    def test_returns_empty_string_when_node_name_missing(self):
-        """Should return empty string when node-name is not in node_config."""
-        context = MagicMock()
-        context.node_config = {}
-
-        msg = MagicMock()
-        msg.content = {
-            "config": {
-                "token-demo": "demo-token-value",
-            }
-        }
-
-        result = get_node_token(msg, context)
-
-        assert result == ""
-
-    def test_handles_missing_config_in_message(self):
-        """Should handle missing 'config' key in message content."""
-        context = MagicMock()
-        context.node_config = {"node-name": "demo"}
-
-        msg = MagicMock()
-        msg.content = {}
-
-        result = get_node_token(msg, context)
-
-        assert result == ""
-
-    def test_handles_none_values(self):
-        """Should handle None values gracefully."""
-        context = MagicMock()
-        context.node_config = {"node-name": "demo"}
-
-        msg = MagicMock()
-        msg.content = {"config": None}
-
-        # This should not raise, but return empty string
-        # Note: current implementation would raise AttributeError
-        # This test documents expected behavior - may need code fix
-        with pytest.raises(AttributeError):
-            get_node_token(msg, context)
+        assert extract_tokens(context) == {"token-demo": "should-match"}
 
 
 class TestGetNodeUrl:
     """Tests for get_node_url function."""
 
-    def test_extracts_correct_url_for_node(self):
-        """Should extract the URL matching the node name."""
-        context = MagicMock()
-        context.node_config = {"node-name": "demo"}
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://armadillo-demo.molgenis.net")
+    def test_reads_url_from_env(self):
+        assert get_node_url() == "https://armadillo-demo.molgenis.net"
 
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "")
+    def test_raises_when_env_not_set(self):
+        with pytest.raises(RuntimeError, match="ARMADILLO_URL"):
+            get_node_url()
+
+
+class TestGetNodeToken:
+    """Tests for get_node_token function."""
+
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://armadillo-demo.molgenis.net")
+    def test_extracts_correct_token_by_url(self):
         msg = MagicMock()
         msg.content = {
             "config": {
-                "url-demo": "https://armadillo-demo.molgenis.net",
-                "url-localhost": "http://localhost:8080",
+                "token-armadillo-demo-molgenis-net": "demo-token-value",
+                "token-localhost-8080": "localhost-token-value",
             }
         }
 
-        result = get_node_url(msg, context)
+        assert get_node_token(msg) == "demo-token-value"
 
-        assert result == "https://armadillo-demo.molgenis.net"
-
-    def test_returns_empty_string_when_url_not_found(self):
-        """Should return empty string when node's URL doesn't exist."""
-        context = MagicMock()
-        context.node_config = {"node-name": "unknown-node"}
-
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://unknown.example.com")
+    def test_raises_when_token_not_found(self):
         msg = MagicMock()
         msg.content = {
             "config": {
-                "url-demo": "https://armadillo-demo.molgenis.net",
+                "token-armadillo-demo-molgenis-net": "demo-token-value",
             }
         }
 
-        result = get_node_url(msg, context)
+        with pytest.raises(RuntimeError, match="No token found"):
+            get_node_token(msg)
 
-        assert result == ""
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "")
+    def test_raises_when_armadillo_url_not_set(self):
+        msg = MagicMock()
+        msg.content = {"config": {"token-demo": "value"}}
 
+        with pytest.raises(RuntimeError, match="ARMADILLO_URL"):
+            get_node_token(msg)
+
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://demo.example.com")
     def test_handles_missing_config_in_message(self):
-        """Should handle missing 'config' key in message content."""
-        context = MagicMock()
-        context.node_config = {"node-name": "demo"}
-
         msg = MagicMock()
         msg.content = {}
 
-        result = get_node_url(msg, context)
+        with pytest.raises(RuntimeError, match="No token found"):
+            get_node_token(msg)
 
-        assert result == ""
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://demo.molgenis.net/")
+    def test_url_trailing_slash_matches(self):
+        """URL with trailing slash should find same token as without."""
+        msg = MagicMock()
+        msg.content = {
+            "config": {
+                "token-demo-molgenis-net": "the-token",
+            }
+        }
+
+        assert get_node_token(msg) == "the-token"
 
 
 class TestLoadData:
     """Tests for load_data function."""
 
     @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.post")
-    def test_posts_to_armadillo(self, mock_post, tmp_path):
+    @patch("molgenis_flwr_armadillo.helpers.requests.request")
+    def test_posts_to_armadillo(self, mock_request, tmp_path):
         """Should POST to /flower/push-data with correct payload."""
-        mock_post.return_value.status_code = 204
-        mock_post.return_value.raise_for_status = MagicMock()
+        mock_request.return_value.status_code = 204
+        mock_request.return_value.raise_for_status = MagicMock()
 
         data_dir = tmp_path / "armadillo_data"
         data_dir.mkdir()
@@ -223,7 +196,8 @@ class TestLoadData:
         with patch("molgenis_flwr_armadillo.helpers.DATA_DIR", data_dir):
             load_data("https://armadillo.example.com", "my-token", "myproject", "train.parquet")
 
-        mock_post.assert_called_once_with(
+        mock_request.assert_called_once_with(
+            "POST",
             "https://armadillo.example.com/flower/push-data",
             headers={"Authorization": "Bearer my-token"},
             json={
@@ -234,10 +208,10 @@ class TestLoadData:
         )
 
     @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.post")
-    def test_reads_and_deletes_file(self, mock_post, tmp_path):
+    @patch("molgenis_flwr_armadillo.helpers.requests.request")
+    def test_reads_and_deletes_file(self, mock_request, tmp_path):
         """Should read file into bytes and delete it."""
-        mock_post.return_value.raise_for_status = MagicMock()
+        mock_request.return_value.raise_for_status = MagicMock()
 
         data_dir = tmp_path / "armadillo_data"
         data_dir.mkdir()
@@ -251,10 +225,10 @@ class TestLoadData:
         assert not filepath.exists()
 
     @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.post")
-    def test_strips_trailing_slash_from_url(self, mock_post, tmp_path):
+    @patch("molgenis_flwr_armadillo.helpers.requests.request")
+    def test_strips_trailing_slash_from_url(self, mock_request, tmp_path):
         """Should strip trailing slash from URL."""
-        mock_post.return_value.raise_for_status = MagicMock()
+        mock_request.return_value.raise_for_status = MagicMock()
 
         data_dir = tmp_path / "armadillo_data"
         data_dir.mkdir()
@@ -263,7 +237,7 @@ class TestLoadData:
         with patch("molgenis_flwr_armadillo.helpers.DATA_DIR", data_dir):
             load_data("http://localhost:8080/", "token", "proj", "file")
 
-        assert mock_post.call_args[0][0] == "http://localhost:8080/flower/push-data"
+        assert mock_request.call_args[0][1] == "http://localhost:8080/flower/push-data"
 
     @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "")
     def test_raises_when_container_name_not_set(self):

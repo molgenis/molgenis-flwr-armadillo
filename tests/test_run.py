@@ -7,10 +7,8 @@ import pytest
 
 
 FAKE_TOKENS = {
-    "token-node1": "eyJtoken1",
-    "url-node1": "https://node1.example.com",
-    "token-node2": "eyJtoken2",
-    "url-node2": "https://node2.example.com",
+    "token-node1-example-com": "eyJtoken1",
+    "token-node2-example-com": "eyJtoken2",
 }
 
 
@@ -25,8 +23,8 @@ class TestBuildCommand:
         assert cmd[0:2] == ["flwr", "run"]
         assert "--run-config" in cmd
         config_str = cmd[cmd.index("--run-config") + 1]
-        assert 'token-node1="eyJtoken1"' in config_str
-        assert 'url-node1="https://node1.example.com"' in config_str
+        assert 'token-node1-example-com="eyJtoken1"' in config_str
+        assert 'token-node2-example-com="eyJtoken2"' in config_str
 
     @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     def test_forwards_user_args(self, mock_load):
