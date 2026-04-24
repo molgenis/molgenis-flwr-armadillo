@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+examples/venv/
+.venv/
+venv/
+
+# Unused examples (kept locally for reference)
+examples/flower-mean/
+examples/flower-tutorial/
+examples/flower-tutorial-local-data/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+
+# Tokens (never commit)
+flwr_tokens.json
+
+# Model outputs
+*.pt
+
+# Temp files
+.flwr/
+
+# Copied into build context by docker build scripts
+molgenis-python-auth/
