@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "molgenis-flwr-armadillo"
+version = "0.1.0"
+description = "Wrapper for running Flower federated learning with Molgenis Armadillo"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Tim Cadman", email = "t.j.cadman@umcg.nl" },
+  { name = "Mariska Slofstra", email = "m.k.slofstra@umcg.nl" }
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "pyyaml",
+  "requests",
+  "rich",
+  "flwr>=1.27.0",
+  "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
+]
+
+[project.urls]
+Documentation = "https://github.com/molgenis/molgenis-flwr-armadillo#readme"
+Issues = "https://github.com/molgenis/molgenis-flwr-armadillo/issues"
+Source = "https://github.com/molgenis/molgenis-flwr-armadillo"
+
+[tool.hatch.version]
+path = "src/molgenis_flwr_armadillo/__about__.py"
+
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov=molgenis_flwr_armadillo --cov-report=term-missing {args:tests}"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/molgenis_flwr_armadillo tests}"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source_pkgs = ["molgenis_flwr_armadillo", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/molgenis_flwr_armadillo/__about__.py",
+]
+
+[tool.coverage.paths]
+molgenis_flwr_armadillo = ["src/molgenis_flwr_armadillo", "*/molgenis-flwr-armadillo/src/molgenis_flwr_armadillo"]
+tests = ["tests", "*/molgenis-flwr-armadillo/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+
+[project.scripts]
+armadillo-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
+armadillo-flwr-resources = "molgenis_flwr_armadillo.resources:main"
+armadillo-flwr-run = "molgenis_flwr_armadillo.run:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/molgenis_flwr_armadillo"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
