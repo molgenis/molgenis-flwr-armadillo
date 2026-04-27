@@ -38,6 +38,7 @@ dev = [
   "ruff>=0.4.0",
 ]
 
+
 [project.urls]
 Documentation = "https://github.com/molgenis/molgenis-flwr-armadillo#readme"
 Issues = "https://github.com/molgenis/molgenis-flwr-armadillo/issues"
@@ -88,6 +89,7 @@ exclude_lines = [
 
 [project.scripts]
 armadillo-flwr-authenticate = "molgenis_flwr_armadillo.authenticate:main"
+armadillo-flwr-resources = "molgenis_flwr_armadillo.resources:main"
 armadillo-flwr-run = "molgenis_flwr_armadillo.run:main"
 
 [tool.hatch.build.targets.wheel]
