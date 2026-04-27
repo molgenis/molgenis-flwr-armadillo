@@ -7,7 +7,7 @@ name = "molgenis-flwr-armadillo"
 version = "0.1.0"
 description = "Wrapper for running Flower federated learning with Molgenis Armadillo"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 keywords = []
 authors = [
@@ -17,7 +17,6 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -31,6 +30,14 @@ dependencies = [
   "flwr>=1.27.0",
   "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "ruff>=0.4.0",
+]
+
 
 [project.urls]
 Documentation = "https://github.com/molgenis/molgenis-flwr-armadillo#readme"
