@@ -3,7 +3,6 @@
 import argparse
 
 from rich.console import Console
-from rich.table import Table
 from rich.tree import Tree
 
 from molgenis_flwr_armadillo.authenticate import load_tokens
