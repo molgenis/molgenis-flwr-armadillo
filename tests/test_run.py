@@ -1,9 +1,13 @@
 """Tests for flwr run wrapper."""
 
+import base64
+import json
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from molgenis_flwr_armadillo.helpers import TOKENS_KEY
 
 
 FAKE_TOKENS = {
@@ -12,6 +16,13 @@ FAKE_TOKENS = {
     "token-node2-example-com": "eyJtoken2",
     "url-node2-example-com": "https://node2.example.com",
 }
+
+
+def _decode_bundle(config_str: str) -> dict:
+    """Extract and decode the armadillo-tokens blob from a --run-config string."""
+    assert config_str.startswith(f"{TOKENS_KEY}=")
+    blob = config_str[len(TOKENS_KEY) + 1:].strip("'")
+    return json.loads(base64.b64decode(blob).decode())
 
 
 class TestBuildCommand:
@@ -25,16 +36,24 @@ class TestBuildCommand:
         assert cmd[0:2] == ["flwr", "run"]
         assert "--run-config" in cmd
         config_str = cmd[cmd.index("--run-config") + 1]
-        assert 'token-node1-example-com="eyJtoken1"' in config_str
-        assert 'token-node2-example-com="eyJtoken2"' in config_str
+        bundle = _decode_bundle(config_str)
+        assert bundle == {
+            "node1-example-com": "eyJtoken1",
+            "node2-example-com": "eyJtoken2",
+        }
 
     @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
-    def test_excludes_url_keys_from_run_config(self, mock_load):
+    def test_excludes_url_keys_from_bundle(self, mock_load):
         from molgenis_flwr_armadillo.run import build_command
 
         cmd = build_command([])
-        config_str = cmd[cmd.index("--run-config") + 1]
-        assert "url-" not in config_str
+        bundle = _decode_bundle(cmd[cmd.index("--run-config") + 1])
+        # Only the two token entries, keyed by sanitized URL; no url- entries.
+        assert bundle == {
+            "node1-example-com": "eyJtoken1",
+            "node2-example-com": "eyJtoken2",
+        }
+        assert "https://node1.example.com" not in bundle.values()
 
     @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     def test_forwards_user_args(self, mock_load):
