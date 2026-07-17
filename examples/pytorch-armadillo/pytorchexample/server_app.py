@@ -1,14 +1,13 @@
-"""flower-tutorial: A Flower / PyTorch app."""
+"""pytorchexample: ServerApp that distributes tokens and URLs to clients."""
 
 import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
-from molgenis_flwr_armadillo import extract_tokens
 
-from flower_tutorial.task import Net
+from pytorchexample.armadillo import extract_tokens
+from pytorchexample.task import Net
 
-# Create ServerApp
 app = ServerApp()
 
 
@@ -19,11 +18,11 @@ def main(grid: Grid, context: Context) -> None:
     # Read run config
     fraction_train: float = context.run_config["fraction-train"]
     num_rounds: int = context.run_config["num-server-rounds"]
-    lr: float = context.run_config["lr"]
+    lr: float = context.run_config["learning-rate"]
+    project: str = context.run_config["project"]
 
-    # Collect all tokens from run_config to pass to clients
+    # Collect tokens and URLs from run_config for passing to clients
     tokens = extract_tokens(context)
-    print(f"Tokens to distribute: {list(tokens.keys())}")
 
     # Load global model
     global_model = Net()
@@ -32,16 +31,25 @@ def main(grid: Grid, context: Context) -> None:
     # Initialize FedAvg strategy
     strategy = FedAvg(fraction_train=fraction_train)
 
-    # Build train config with lr and all tokens
-    train_config = {"lr": lr, **tokens}
+    # Build configs: both train and evaluate need tokens + URLs + project
+    train_config = ConfigRecord({"lr": lr, "project": project, **tokens})
+    evaluate_config = ConfigRecord({"project": project, **tokens})
 
-    # Start strategy, run FedAvg for `num_rounds`
+    # Start strategy
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord(train_config),
+        train_config=train_config,
+        evaluate_config=evaluate_config,
         num_rounds=num_rounds,
     )
+
+    # Check if any training actually happened
+    if not result.train_metrics_clientapp:
+        raise RuntimeError(
+            "Federated learning failed: no successful training rounds. "
+            "All client nodes returned errors. Check the clientapp logs for details."
+        )
 
     # Save final model to disk
     print("\nSaving final model to disk...")
