@@ -37,6 +37,9 @@ local-epochs = 1
 learning-rate = 0.01
 project = "test-flower"
 
+# base64(JSON {sanitized-url: token}) injected at run time by armadillo-flwr-run
+armadillo-tokens = ""
+
 [tool.flwr.federations]
 default = "local-deployment"
 
