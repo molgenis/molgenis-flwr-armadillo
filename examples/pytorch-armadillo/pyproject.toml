@@ -22,7 +22,7 @@ allow-direct-references = true
 packages = ["."]
 
 [tool.flwr.app]
-publisher = "molgenis"
+publisher = "timmyjc"
 fab-format-version = 1
 flwr-version-target = "1.32.1"
 
