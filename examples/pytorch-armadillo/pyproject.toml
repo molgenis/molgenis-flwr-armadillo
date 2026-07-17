@@ -4,14 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quickstart-pytorch-armadillo"
-version = "1.0.1"
+version = "1.0.2"
 description = "Flower/PyTorch example loading data via the MOLGENIS Armadillo push-data endpoint"
 license = { file = "LICENSE" }
+requires-python = ">=3.10"
 dependencies = [
     "flwr[simulation]>=1.32.0",
     "flwr-datasets[vision]>=0.5.0",
-    "torch==2.4.1",
-    "torchvision==0.19.1",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
     "requests>=2.31.0",
 ]
 
