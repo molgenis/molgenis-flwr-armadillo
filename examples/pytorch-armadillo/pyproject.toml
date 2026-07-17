@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quickstart-pytorch-armadillo"
-version = "1.0.0"
+version = "1.0.1"
 description = "Flower/PyTorch example loading data via the MOLGENIS Armadillo push-data endpoint"
 license = { file = "LICENSE" }
 dependencies = [
