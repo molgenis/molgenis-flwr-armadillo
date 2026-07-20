@@ -8,12 +8,21 @@ version = "1.0.3"
 description = "Flower/PyTorch example loading data via the MOLGENIS Armadillo push-data endpoint"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
+# Deployment deps only. Exact pins so every node runs identical code, matching
+# the baked superexec image. Simulation-only deps (ray via flwr[simulation],
+# flwr-datasets) are in the optional [simulation] extra — flwr_datasets is
+# imported lazily inside get_sim_dataloaders, so deployment never needs it.
 dependencies = [
+    "flwr>=1.32.0",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+simulation = [
     "flwr[simulation]>=1.32.0",
     "flwr-datasets[vision]>=0.5.0",
-    "torch>=2.6.0",
-    "torchvision>=0.21.0",
-    "requests>=2.31.0",
 ]
 
 [tool.hatch.metadata]
