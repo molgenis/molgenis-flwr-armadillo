@@ -32,14 +32,16 @@ armadillo-flwr-run .
 │  (researcher config)       (app config)           (set by Armadillo)       │
 │                                                                              │
 │  urls:                     [tool.flwr.app.config]  ARMADILLO_URL=           │
-│    - "https://demo..."     token-demo-...= ""        "https://demo..."     │
-│    - "https://dev..."      token-dev-... = ""                               │
+│    - "https://demo..."     armadillo-tokens = ""     "https://demo..."     │
+│    - "https://dev..."                                                       │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-URLs are sanitized into safe config keys automatically (e.g.
-`https://armadillo-demo.molgenis.net` becomes `armadillo-demo-molgenis-net`).
-Armadillo injects its URL into the container via the `ARMADILLO_URL` environment variable.
+Every token travels in one `armadillo-tokens` run-config value: a base64-encoded
+JSON map of `{sanitized-url: token}`, where URLs are sanitized into safe keys
+automatically (e.g. `https://armadillo-demo.molgenis.net` becomes
+`armadillo-demo-molgenis-net`). Inside the container each client picks its own
+token by matching the `ARMADILLO_URL` environment variable Armadillo injected.
 
 ## File Configuration
 
@@ -62,8 +64,7 @@ fraction-evaluate = 0.5
 local-epochs = 1
 learning-rate = 0.1
 batch-size = 32
-token-armadillo-demo-molgenis-net = ""
-token-armadillo-dev-molgenis-org = ""
+armadillo-tokens = ""
 
 [tool.flwr.federations]
 default = "local-deployment"
@@ -73,8 +74,8 @@ address = "127.0.0.1:9093"
 insecure = true
 ```
 
-Token keys are derived from the URL using `sanitize_url()`. Run
-`python -c "from molgenis_flwr_armadillo import sanitize_url; print(sanitize_url('YOUR_URL'))"` to check.
+Declaring `armadillo-tokens` once is all the app needs: per-node keys are never
+declared, which keeps the app publishable on Flower Hub.
 
 ### 3. `ARMADILLO_URL` - Set by Armadillo
 
@@ -152,12 +153,11 @@ See the [flower-examples](https://github.com/molgenis/flower-examples) repo for 
 
 ## Troubleshooting
 
-### "Key 'token-xxx' is not present in the main dictionary"
-The token key in `--run-config` doesn't exist in `pyproject.toml`. Add the
-sanitized URL key:
+### "Key 'armadillo-tokens' is not present in the main dictionary"
+The app's `pyproject.toml` doesn't declare the token bundle key. Add it:
 ```toml
 [tool.flwr.app.config]
-token-armadillo-demo-molgenis-net = ""
+armadillo-tokens = ""
 ```
 
 ### "ARMADILLO_URL environment variable not set"
@@ -167,5 +167,5 @@ In production, Armadillo injects this automatically.
 ### Tokens showing as empty
 Check that:
 - `flower-nodes.yaml` URLs match the Armadillo server URLs
-- `pyproject.toml` token keys match the sanitized URLs
+- `pyproject.toml` declares `armadillo-tokens`
 - Container has `ARMADILLO_URL` set as an environment variable

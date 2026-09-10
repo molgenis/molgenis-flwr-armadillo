@@ -1,57 +1,59 @@
 """Tests for flwr run wrapper."""
 
+import base64
+import json
+import stat
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from molgenis_flwr_armadillo.helpers import TOKENS_KEY
+from molgenis_flwr_armadillo.run import build_command, main, write_run_config
 
 FAKE_TOKENS = {
-    "token-node1-example-com": "eyJtoken1",
-    "url-node1-example-com": "https://node1.example.com",
-    "token-node2-example-com": "eyJtoken2",
-    "url-node2-example-com": "https://node2.example.com",
+    "node1-example-com": "eyJtoken1",
+    "node2-example-com": "eyJtoken2",
 }
+
+
+def _read_bundle(path: Path) -> dict:
+    """Decode the armadillo-tokens value from a run-config TOML file."""
+    key, _, value = path.read_text().strip().partition(" = ")
+    assert key == TOKENS_KEY
+    return json.loads(base64.b64decode(value.strip('"')).decode())
+
+
+class TestWriteRunConfig:
+    """Tests for write_run_config."""
+
+    def test_writes_token_bundle(self):
+        path = write_run_config(FAKE_TOKENS)
+        try:
+            assert path.suffix == ".toml"
+            assert _read_bundle(path) == FAKE_TOKENS
+        finally:
+            path.unlink()
+
+    def test_file_is_private(self):
+        path = write_run_config(FAKE_TOKENS)
+        try:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        finally:
+            path.unlink()
 
 
 class TestBuildCommand:
     """Tests for build_command."""
 
-    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
-    def test_builds_flwr_run_with_tokens(self, mock_load):
-        from molgenis_flwr_armadillo.run import build_command
+    def test_points_run_config_at_file(self):
+        cmd = build_command([], Path("/tmp/x.toml"))
+        assert cmd == ["flwr", "run", "--run-config", "/tmp/x.toml"]
 
-        cmd = build_command([])
-        assert cmd[0:2] == ["flwr", "run"]
-        assert "--run-config" in cmd
-        config_str = cmd[cmd.index("--run-config") + 1]
-        assert 'token-node1-example-com="eyJtoken1"' in config_str
-        assert 'token-node2-example-com="eyJtoken2"' in config_str
-
-    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
-    def test_excludes_url_keys_from_run_config(self, mock_load):
-        from molgenis_flwr_armadillo.run import build_command
-
-        cmd = build_command([])
-        config_str = cmd[cmd.index("--run-config") + 1]
-        assert "url-" not in config_str
-
-    @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
-    def test_forwards_user_args(self, mock_load):
-        from molgenis_flwr_armadillo.run import build_command
-
-        cmd = build_command([".", "federation", "--stream"])
+    def test_forwards_user_args(self):
+        cmd = build_command([".", "federation", "--stream"], Path("/tmp/x.toml"))
         assert cmd[2:5] == [".", "federation", "--stream"]
-
-    @patch(
-        "molgenis_flwr_armadillo.run.load_tokens",
-        side_effect=FileNotFoundError("No tokens found"),
-    )
-    def test_raises_when_no_tokens(self, mock_load):
-        from molgenis_flwr_armadillo.run import build_command
-
-        with pytest.raises(FileNotFoundError):
-            build_command([])
 
 
 class TestMain:
@@ -60,9 +62,7 @@ class TestMain:
     @patch("molgenis_flwr_armadillo.run.subprocess.run")
     @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     @patch("molgenis_flwr_armadillo.run.console")
-    def test_calls_flwr_run(self, mock_console, mock_load, mock_run):
-        from molgenis_flwr_armadillo.run import main
-
+    def test_calls_flwr_run_and_removes_config_file(self, mock_console, mock_load, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
 
         with patch.object(sys, "argv", ["prog", ".", "fed1"]):
@@ -70,16 +70,14 @@ class TestMain:
                 main()
             assert exc_info.value.code == 0
 
-        mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0:2] == ["flwr", "run"]
+        assert not Path(cmd[cmd.index("--run-config") + 1]).exists()
 
     @patch("molgenis_flwr_armadillo.run.subprocess.run")
     @patch("molgenis_flwr_armadillo.run.load_tokens", return_value=FAKE_TOKENS)
     @patch("molgenis_flwr_armadillo.run.console")
     def test_propagates_return_code(self, mock_console, mock_load, mock_run):
-        from molgenis_flwr_armadillo.run import main
-
         mock_run.return_value = MagicMock(returncode=1)
 
         with patch.object(sys, "argv", ["prog"]):
@@ -93,8 +91,6 @@ class TestMain:
     )
     @patch("molgenis_flwr_armadillo.run.console")
     def test_exits_on_missing_tokens(self, mock_console, mock_load):
-        from molgenis_flwr_armadillo.run import main
-
         with patch.object(sys, "argv", ["prog"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()

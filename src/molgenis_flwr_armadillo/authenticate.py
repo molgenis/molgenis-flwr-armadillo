@@ -44,7 +44,7 @@ def authenticate(config_path: str) -> dict:
         config_path: Path to YAML config file with list of Armadillo URLs
 
     Returns:
-        Dictionary of {token-<sanitized-url>: token_value}
+        Dictionary of {sanitized-url: access token}
     """
     # Load config
     with open(config_path) as f:
@@ -73,8 +73,7 @@ def authenticate(config_path: str) -> dict:
         console.print("  [yellow]Opening browser for authentication...[/yellow]")
         auth_result = client.device_flow_auth()
 
-        tokens[f"token-{key}"] = auth_result["access_token"]
-        tokens[f"url-{key}"] = url
+        tokens[key] = auth_result["access_token"]
         console.print(f"  [green]✓ {url} authenticated[/green]")
 
     save_tokens(tokens)
