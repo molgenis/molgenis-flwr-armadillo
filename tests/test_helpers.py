@@ -1,14 +1,22 @@
 """Tests for helper functions."""
 
+import base64
+import json
 import pytest
 from unittest.mock import MagicMock, patch
 
 from molgenis_flwr_armadillo.helpers import (
+    TOKENS_KEY,
     extract_tokens,
     get_node_token,
     get_node_url,
     sanitize_url,
 )
+
+
+def _blob(mapping: dict) -> str:
+    """Encode a {sanitized-url: token} map the way armadillo-flwr-run does."""
+    return base64.b64encode(json.dumps(mapping).encode()).decode()
 
 
 class TestSanitizeUrl:
@@ -56,34 +64,17 @@ class TestSanitizeUrl:
 class TestExtractTokens:
     """Tests for extract_tokens function."""
 
-    def test_extracts_token_keys(self):
-        """Should extract only keys starting with 'token-'."""
+    def test_extracts_token_bundle(self):
+        """Should return the single armadillo-tokens run-config entry."""
+        blob = _blob({"armadillo-demo-molgenis-net": "abc123"})
         context = MagicMock()
         context.run_config = {
             "learning-rate": 0.1,
             "batch-size": 32,
-            "token-armadillo-demo-molgenis-net": "abc123",
-            "token-localhost-8080": "xyz789",
+            TOKENS_KEY: blob,
         }
 
-        result = extract_tokens(context)
-
-        assert result == {
-            "token-armadillo-demo-molgenis-net": "abc123",
-            "token-localhost-8080": "xyz789",
-        }
-
-    def test_does_not_extract_url_keys(self):
-        """Should not extract url- keys (URLs come from node_config now)."""
-        context = MagicMock()
-        context.run_config = {
-            "token-armadillo-demo-molgenis-net": "abc123",
-            "url-demo": "https://armadillo-demo.molgenis.net",
-        }
-
-        result = extract_tokens(context)
-
-        assert result == {"token-armadillo-demo-molgenis-net": "abc123"}
+        assert extract_tokens(context) == {TOKENS_KEY: blob}
 
     def test_returns_empty_dict_when_no_tokens(self):
         context = MagicMock()
@@ -97,15 +88,11 @@ class TestExtractTokens:
 
         assert extract_tokens(context) == {}
 
-    def test_does_not_extract_partial_matches(self):
+    def test_ignores_empty_bundle(self):
         context = MagicMock()
-        context.run_config = {
-            "my-token": "should-not-match",
-            "tokenizer": "should-not-match",
-            "token-demo": "should-match",
-        }
+        context.run_config = {TOKENS_KEY: ""}
 
-        assert extract_tokens(context) == {"token-demo": "should-match"}
+        assert extract_tokens(context) == {}
 
 
 class TestGetNodeUrl:
@@ -129,8 +116,12 @@ class TestGetNodeToken:
         msg = MagicMock()
         msg.content = {
             "config": {
-                "token-armadillo-demo-molgenis-net": "demo-token-value",
-                "token-localhost-8080": "localhost-token-value",
+                TOKENS_KEY: _blob(
+                    {
+                        "armadillo-demo-molgenis-net": "demo-token-value",
+                        "localhost-8080": "localhost-token-value",
+                    }
+                )
             }
         }
 
@@ -141,7 +132,7 @@ class TestGetNodeToken:
         msg = MagicMock()
         msg.content = {
             "config": {
-                "token-armadillo-demo-molgenis-net": "demo-token-value",
+                TOKENS_KEY: _blob({"armadillo-demo-molgenis-net": "demo-token-value"})
             }
         }
 
@@ -151,17 +142,25 @@ class TestGetNodeToken:
     @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "")
     def test_raises_when_armadillo_url_not_set(self):
         msg = MagicMock()
-        msg.content = {"config": {"token-demo": "value"}}
+        msg.content = {"config": {TOKENS_KEY: _blob({"demo": "value"})}}
 
         with pytest.raises(RuntimeError, match="ARMADILLO_URL"):
             get_node_token(msg)
 
     @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://demo.example.com")
-    def test_handles_missing_config_in_message(self):
+    def test_raises_when_bundle_missing(self):
         msg = MagicMock()
         msg.content = {}
 
-        with pytest.raises(RuntimeError, match="No token found"):
+        with pytest.raises(RuntimeError, match=TOKENS_KEY):
+            get_node_token(msg)
+
+    @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://demo.example.com")
+    def test_raises_on_undecodable_bundle(self):
+        msg = MagicMock()
+        msg.content = {"config": {TOKENS_KEY: "not-base64-json"}}
+
+        with pytest.raises(RuntimeError, match="Failed to decode"):
             get_node_token(msg)
 
     @patch("molgenis_flwr_armadillo.helpers.ARMADILLO_URL", "https://demo.molgenis.net/")
@@ -169,9 +168,7 @@ class TestGetNodeToken:
         """URL with trailing slash should find same token as without."""
         msg = MagicMock()
         msg.content = {
-            "config": {
-                "token-demo-molgenis-net": "the-token",
-            }
+            "config": {TOKENS_KEY: _blob({"demo-molgenis-net": "the-token"})}
         }
 
         assert get_node_token(msg) == "the-token"

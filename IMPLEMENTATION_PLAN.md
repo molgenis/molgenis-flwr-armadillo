@@ -61,8 +61,9 @@ In both cases, the file is deleted immediately after loading into memory, before
    armadillo-flwr-authenticate. Tokens saved locally.
 
 2. Researcher submits Flower job via armadillo-flwr-run.
-   Tokens injected into Flower's --run-config as
-   token-{sanitized-url}="eyJ..." key-value pairs.
+   All tokens are bundled into one run-config value,
+   armadillo-tokens = base64(JSON {sanitized-url: token}),
+   handed to flwr run as a private TOML file.
 
 3. Flower routes the job. ServerApp extracts tokens from
    run_config and forwards them to ClientApps via ConfigRecord.
@@ -108,23 +109,21 @@ In both cases, the file is deleted immediately after loading into memory, before
 
 ## Token Routing
 
-Tokens are routed using sanitized URLs as keys. The researcher authenticates to each Armadillo server, and the authenticate CLI derives a config-safe key from each URL using `sanitize_url()` (strips scheme, lowercases, replaces non-alphanumeric chars with hyphens).
+Tokens are routed using sanitized URLs as keys. The researcher authenticates to each Armadillo server, and the authenticate CLI derives a config-safe key from each URL using `sanitize_url()` (strips scheme, lowercases, replaces non-alphanumeric chars with hyphens). All tokens travel in a single declared run-config key, `armadillo-tokens`, as a base64-encoded JSON map of `{sanitized-url: token}`: a published Flower Hub app must declare every run-config key it accepts, and per-node keys are only known at run time.
 
 ```
 flower-nodes.yaml          Token file                  pyproject.toml
 (researcher config)        (generated)                 (app config)
 
-urls:                      token-armadillo-demo-       [tool.flwr.app.config]
-  - "https://armadillo-      molgenis-net: "eyJ..."    token-armadillo-demo-
-     demo.molgenis.net"    url-armadillo-demo-            molgenis-net = ""
-                             molgenis-net: "https://
-                             armadillo-demo..."
+urls:                      armadillo-demo-             [tool.flwr.app.config]
+  - "https://armadillo-      molgenis-net: "eyJ..."    armadillo-tokens = ""
+     demo.molgenis.net"
 ```
 
 On the container side, Armadillo injects the `ARMADILLO_URL` environment variable when starting the superexec container. The Python helpers read this to match the correct token:
 
 - `get_node_url()` — reads `ARMADILLO_URL` from the environment
-- `get_node_token(msg)` — sanitizes the URL, looks up `token-{key}` from the ConfigRecord
+- `get_node_token(msg)` — decodes the `armadillo-tokens` bundle from the ConfigRecord and looks up the sanitized URL
 
 ---
 
@@ -154,7 +153,7 @@ Manages Flower container lifecycle:
 - `armadillo-flwr-resources` — lists accessible projects and resources on each Armadillo
 
 **Helper functions (for use in Flower apps):**
-- `extract_tokens(context)` — collects `token-*` keys from run_config for the server to forward
+- `extract_tokens(context)` — returns the `armadillo-tokens` bundle from run_config for the server to forward
 - `get_node_url()` — reads `ARMADILLO_URL` env var
 - `get_node_token(msg)` — matches this node's token from the ConfigRecord
 - `sanitize_url(url)` — converts URL to a config-safe key
