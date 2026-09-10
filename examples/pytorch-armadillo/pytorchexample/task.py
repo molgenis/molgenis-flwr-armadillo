@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import Compose, Normalize, ToTensor
 
-from pytorchexample.armadillo import load_data
+from molgenis_flwr_armadillo import load_data
 
 
 class Net(nn.Module):

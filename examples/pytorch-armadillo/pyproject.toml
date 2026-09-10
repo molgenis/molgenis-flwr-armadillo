@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quickstart-pytorch-armadillo"
-version = "1.0.3"
+version = "1.0.4"
 description = "Flower/PyTorch example loading data via the MOLGENIS Armadillo push-data endpoint"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -12,11 +12,13 @@ requires-python = ">=3.11"
 # the baked superexec image. Simulation-only deps (ray via flwr[simulation],
 # flwr-datasets) are in the optional [simulation] extra — flwr_datasets is
 # imported lazily inside get_sim_dataloaders, so deployment never needs it.
+# molgenis-flwr-armadillo is deliberately not declared: it isn't on PyPI, and
+# Flower Hub must resolve every declared dependency. The superexec image bakes
+# it in; for simulation, pip install it from the repo root first.
 dependencies = [
     "flwr>=1.32.0",
     "torch==2.6.0",
     "torchvision==0.21.0",
-    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]

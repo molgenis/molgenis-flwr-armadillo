@@ -5,7 +5,7 @@ from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from pytorchexample.armadillo import extract_tokens
+from molgenis_flwr_armadillo import extract_tokens
 from pytorchexample.task import Net
 
 app = ServerApp()

@@ -4,7 +4,7 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from pytorchexample.armadillo import get_node_token, get_node_url
+from molgenis_flwr_armadillo import get_node_token, get_node_url
 from pytorchexample.task import Net, get_dataloaders, get_sim_dataloaders
 from pytorchexample.task import test as test_fn
 from pytorchexample.task import train as train_fn

@@ -15,13 +15,18 @@ The app runs in both Flower runtimes without code changes:
   authenticates with each Armadillo node
   (`armadillo-flwr-authenticate`, from
   [molgenis-flwr-armadillo](https://github.com/molgenis/molgenis-flwr-armadillo))
-  and submits the run with `armadillo-flwr-run`, which injects one OIDC token
-  per node as `token-<sanitized-url>` run-config keys.
+  and submits the run with `armadillo-flwr-run`, which injects all node tokens
+  as the single `armadillo-tokens` run-config key.
+
+The app imports its Armadillo helpers from the `molgenis-flwr-armadillo`
+package. In deployment the superexec image provides it; for simulation install
+it from the repository root first.
 
 ## Simulation
 
 ```bash
-pip install -e .
+pip install -e ../..        # molgenis-flwr-armadillo
+pip install -e ".[simulation]"
 flwr run .
 ```
 
