@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quickstart-pytorch-armadillo"
+version = "1.0.3"
+description = "Flower/PyTorch example loading data via the MOLGENIS Armadillo push-data endpoint"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+# Deployment deps only. Exact pins so every node runs identical code, matching
+# the baked superexec image. Simulation-only deps (ray via flwr[simulation],
+# flwr-datasets) are in the optional [simulation] extra — flwr_datasets is
+# imported lazily inside get_sim_dataloaders, so deployment never needs it.
+dependencies = [
+    "flwr>=1.32.0",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+simulation = [
+    "flwr[simulation]>=1.32.0",
+    "flwr-datasets[vision]>=0.5.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "timmyjc"
+fab-format-version = 1
+flwr-version-target = "1.32.1"
+
+[tool.flwr.app.components]
+serverapp = "pytorchexample.server_app:app"
+clientapp = "pytorchexample.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 1
+fraction-train = 0.5
+local-epochs = 1
+learning-rate = 0.01
+project = "test-flower"
+
+# base64(JSON {sanitized-url: token}) injected at run time by armadillo-flwr-run
+armadillo-tokens = ""
+
+[tool.flwr.federations]
+default = "local-deployment"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 2
+
+[tool.flwr.federations.local-deployment]
+address = "127.0.0.1:9093"
+insecure = true
+options.num-supernodes = 2
