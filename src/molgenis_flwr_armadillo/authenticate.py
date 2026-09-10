@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def get_auth_info(armadillo_url: str) -> dict:
         Dict with 'clientId' and 'issuerUri'
     """
     info_url = f"{armadillo_url.rstrip('/')}/actuator/info"
-    response = requests.get(info_url)
+    response = requests.get(info_url, timeout=30)
     response.raise_for_status()
     return response.json()["auth"]
 
@@ -92,9 +93,12 @@ def authenticate(config_path: str) -> dict:
 
 
 def save_tokens(tokens: dict) -> None:
-    """Save tokens to temp file."""
-    with open(TOKEN_FILE, "w") as f:
+    """Save tokens to a private (0600) temp file."""
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(tokens, f)
+    # O_CREAT's mode only applies to a newly created file; tighten an existing one too.
+    TOKEN_FILE.chmod(0o600)
     console.print(f"\n[dim]Tokens saved to {TOKEN_FILE}[/dim]")
 
 

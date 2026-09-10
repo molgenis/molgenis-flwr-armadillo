@@ -1,6 +1,7 @@
 """Tests for authentication functions."""
 
 import json
+import stat
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -30,7 +31,9 @@ class TestGetAuthInfo:
             "clientId": "test-client",
             "issuerUri": "https://auth.example.com",
         }
-        mock_get.assert_called_once_with("https://armadillo.example.com/actuator/info")
+        mock_get.assert_called_once_with(
+            "https://armadillo.example.com/actuator/info", timeout=30
+        )
 
     @patch("requests.get")
     def test_strips_trailing_slash(self, mock_get):
@@ -43,7 +46,9 @@ class TestGetAuthInfo:
 
         get_auth_info("https://armadillo.example.com/")
 
-        mock_get.assert_called_once_with("https://armadillo.example.com/actuator/info")
+        mock_get.assert_called_once_with(
+            "https://armadillo.example.com/actuator/info", timeout=30
+        )
 
     @patch("requests.get")
     def test_raises_on_http_error(self, mock_get):
@@ -140,6 +145,25 @@ class TestSaveAndLoadTokens:
             loaded = load_tokens()
 
             assert loaded == {}
+        finally:
+            auth_mod.TOKEN_FILE = original_token_file
+
+    def test_token_file_is_private(self, tmp_path):
+        """Should create the file 0600, and tighten a pre-existing looser one."""
+        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
+        from molgenis_flwr_armadillo.authenticate import save_tokens
+
+        test_token_file = tmp_path / "test_tokens.json"
+        test_token_file.write_text("{}")
+        test_token_file.chmod(0o644)
+        original_token_file = auth_mod.TOKEN_FILE
+        auth_mod.TOKEN_FILE = test_token_file
+
+        try:
+            with patch.object(auth_mod, "console"):
+                save_tokens({"demo": "abc123"})
+
+            assert stat.S_IMODE(test_token_file.stat().st_mode) == 0o600
         finally:
             auth_mod.TOKEN_FILE = original_token_file
 
