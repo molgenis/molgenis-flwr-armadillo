@@ -8,15 +8,19 @@ def _auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _request(method: str, url: str, token: str, path: str, **kwargs):
+def _request(method: str, url: str, token: str, path: str, timeout: float = 30, **kwargs):
     """Make an authenticated request to Armadillo with error handling."""
     endpoint = f"{url.rstrip('/')}{path}"
     try:
         response = requests.request(
-            method, endpoint, headers=_auth_headers(token), **kwargs
+            method, endpoint, headers=_auth_headers(token), timeout=timeout, **kwargs
         )
         response.raise_for_status()
         return response
+    except requests.exceptions.Timeout as e:
+        raise RuntimeError(
+            f"No response from Armadillo at {endpoint} within {timeout}s."
+        ) from e
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else "unknown"
         if status == 401:
