@@ -7,7 +7,6 @@ from molgenis_flwr_armadillo.helpers import (
     extract_tokens,
     get_node_token,
     get_node_url,
-    load_data,
     sanitize_url,
 )
 
@@ -176,71 +175,3 @@ class TestGetNodeToken:
         }
 
         assert get_node_token(msg) == "the-token"
-
-
-class TestLoadData:
-    """Tests for load_data function."""
-
-    @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.request")
-    def test_posts_to_armadillo(self, mock_request, tmp_path):
-        """Should POST to /flower/push-data with correct payload."""
-        mock_request.return_value.status_code = 204
-        mock_request.return_value.raise_for_status = MagicMock()
-
-        data_dir = tmp_path / "armadillo_data"
-        data_dir.mkdir()
-        filepath = data_dir / "myproject_train.parquet"
-        filepath.write_bytes(b"test data")
-
-        with patch("molgenis_flwr_armadillo.helpers.DATA_DIR", data_dir):
-            load_data("https://armadillo.example.com", "my-token", "myproject", "train.parquet")
-
-        mock_request.assert_called_once_with(
-            "POST",
-            "https://armadillo.example.com/flower/push-data",
-            headers={"Authorization": "Bearer my-token"},
-            json={
-                "project": "myproject",
-                "resource": "train.parquet",
-                "containerName": "flower-client-1",
-            },
-        )
-
-    @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.request")
-    def test_reads_and_deletes_file(self, mock_request, tmp_path):
-        """Should read file into bytes and delete it."""
-        mock_request.return_value.raise_for_status = MagicMock()
-
-        data_dir = tmp_path / "armadillo_data"
-        data_dir.mkdir()
-        filepath = data_dir / "proj_data_train"
-        filepath.write_bytes(b"raw file content")
-
-        with patch("molgenis_flwr_armadillo.helpers.DATA_DIR", data_dir):
-            result = load_data("http://localhost:8080", "token", "proj", "data/train")
-
-        assert result == b"raw file content"
-        assert not filepath.exists()
-
-    @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "flower-client-1")
-    @patch("molgenis_flwr_armadillo.helpers.requests.request")
-    def test_strips_trailing_slash_from_url(self, mock_request, tmp_path):
-        """Should strip trailing slash from URL."""
-        mock_request.return_value.raise_for_status = MagicMock()
-
-        data_dir = tmp_path / "armadillo_data"
-        data_dir.mkdir()
-        (data_dir / "proj_file").write_bytes(b"data")
-
-        with patch("molgenis_flwr_armadillo.helpers.DATA_DIR", data_dir):
-            load_data("http://localhost:8080/", "token", "proj", "file")
-
-        assert mock_request.call_args[0][1] == "http://localhost:8080/flower/push-data"
-
-    @patch("molgenis_flwr_armadillo.helpers.CONTAINER_NAME", "")
-    def test_raises_when_container_name_not_set(self):
-        """Should raise RuntimeError when ARMADILLO_CONTAINER_NAME is not set."""
-        with pytest.raises(RuntimeError, match="ARMADILLO_CONTAINER_NAME"):
-            load_data("http://localhost:8080", "token", "proj", "file")
