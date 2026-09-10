@@ -14,16 +14,13 @@ from rich.table import Table
 
 from molgenis_flwr_armadillo.helpers import sanitize_url
 
-# Console for styled output
 console = Console()
 
-# Default token storage location
 TOKEN_FILE = Path(tempfile.gettempdir()) / "flwr_tokens.json"
 
 
 def get_auth_info(armadillo_url: str) -> dict:
-    """
-    Get auth info from Armadillo server.
+    """Get auth info from Armadillo server.
 
     Args:
         armadillo_url: Base URL of Armadillo server
@@ -37,9 +34,47 @@ def get_auth_info(armadillo_url: str) -> dict:
     return response.json()["auth"]
 
 
+def load_node_urls(config_path: str) -> list[str]:
+    """Read the Armadillo URLs from a flower-nodes.yaml config."""
+    with open(config_path) as f:
+        return yaml.safe_load(f)["urls"]
+
+
+def authenticate_node(url: str) -> str:
+    """Run the OIDC device flow against one Armadillo and return its access token."""
+    console.rule(f"[bold blue]{url}[/bold blue]")
+    with console.status(f"Fetching auth info from {url}..."):
+        auth_info = get_auth_info(url)
+
+    console.print(f"  URL: [cyan]{url}[/cyan]")
+    console.print(f"  Key: [cyan]{sanitize_url(url)}[/cyan]")
+    console.print(f"  Auth server: [cyan]{auth_info['issuerUri']}[/cyan]")
+
+    client = MolgenisAuthClient(
+        auth_server=auth_info["issuerUri"],
+        client_id=auth_info["clientId"],
+        scopes="openid offline_access",
+    )
+    console.print("  [yellow]Opening browser for authentication...[/yellow]")
+    auth_result = client.device_flow_auth()
+    console.print(f"  [green]✓ {url} authenticated[/green]")
+    return auth_result["access_token"]
+
+
+def print_summary(urls: list[str]) -> None:
+    """Print the table of authenticated nodes."""
+    console.print()
+    table = Table(title="Authenticated Nodes")
+    table.add_column("URL", style="cyan")
+    table.add_column("Key", style="dim")
+    table.add_column("Status", style="green")
+    for url in urls:
+        table.add_row(url, sanitize_url(url), "✓ Ready")
+    console.print(table)
+
+
 def authenticate(config_path: str) -> dict:
-    """
-    Load node config and authenticate to each node.
+    """Authenticate to every node in the config and save the tokens.
 
     Args:
         config_path: Path to YAML config file with list of Armadillo URLs
@@ -47,48 +82,10 @@ def authenticate(config_path: str) -> dict:
     Returns:
         Dictionary of {sanitized-url: access token}
     """
-    # Load config
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-
-    tokens = {}
-
-    for url in config["urls"]:
-        key = sanitize_url(url)
-        console.rule(f"[bold blue]{url}[/bold blue]")
-
-        with console.status(f"Fetching auth info from {url}..."):
-            auth_info = get_auth_info(url)
-
-        console.print(f"  URL: [cyan]{url}[/cyan]")
-        console.print(f"  Key: [cyan]{key}[/cyan]")
-        console.print(f"  Auth server: [cyan]{auth_info['issuerUri']}[/cyan]")
-
-        # Authenticate using discovered settings
-        client = MolgenisAuthClient(
-            auth_server=auth_info["issuerUri"],
-            client_id=auth_info["clientId"],
-            scopes="openid offline_access"
-        )
-
-        console.print("  [yellow]Opening browser for authentication...[/yellow]")
-        auth_result = client.device_flow_auth()
-
-        tokens[key] = auth_result["access_token"]
-        console.print(f"  [green]✓ {url} authenticated[/green]")
-
+    urls = load_node_urls(config_path)
+    tokens = {sanitize_url(url): authenticate_node(url) for url in urls}
     save_tokens(tokens)
-
-    # Summary table
-    console.print()
-    table = Table(title="Authenticated Nodes")
-    table.add_column("URL", style="cyan")
-    table.add_column("Key", style="dim")
-    table.add_column("Status", style="green")
-    for url in config["urls"]:
-        table.add_row(url, sanitize_url(url), "✓ Ready")
-    console.print(table)
-
+    print_summary(urls)
     return tokens
 
 
@@ -127,5 +124,3 @@ def main():
     authenticate(args.config)
 
     console.print("\n[green]Ready to run:[/green] armadillo-flwr-run")
-
-

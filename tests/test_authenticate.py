@@ -190,3 +190,58 @@ class TestSaveAndLoadTokens:
             assert parsed == tokens
         finally:
             auth_mod.TOKEN_FILE = original_token_file
+
+
+class TestLoadNodeUrls:
+    """Tests for load_node_urls function."""
+
+    def test_reads_urls_from_yaml(self, tmp_path):
+        from molgenis_flwr_armadillo.authenticate import load_node_urls
+
+        config = tmp_path / "flower-nodes.yaml"
+        config.write_text('urls:\n  - "https://a.example.com"\n  - "https://b.example.com"\n')
+
+        assert load_node_urls(str(config)) == ["https://a.example.com", "https://b.example.com"]
+
+
+class TestAuthenticateNode:
+    """Tests for authenticate_node function."""
+
+    @patch("molgenis_flwr_armadillo.authenticate.console")
+    @patch("molgenis_flwr_armadillo.authenticate.MolgenisAuthClient")
+    @patch(
+        "molgenis_flwr_armadillo.authenticate.get_auth_info",
+        return_value={"clientId": "cid", "issuerUri": "https://auth.example.com"},
+    )
+    def test_runs_device_flow_with_discovered_settings(self, mock_info, mock_client_cls, mock_console):
+        from molgenis_flwr_armadillo.authenticate import authenticate_node
+
+        mock_client_cls.return_value.device_flow_auth.return_value = {"access_token": "eyJ..."}
+
+        assert authenticate_node("https://a.example.com") == "eyJ..."
+        mock_info.assert_called_once_with("https://a.example.com")
+        mock_client_cls.assert_called_once_with(
+            auth_server="https://auth.example.com",
+            client_id="cid",
+            scopes="openid offline_access",
+        )
+
+
+class TestAuthenticate:
+    """Tests for the authenticate orchestrator."""
+
+    @patch("molgenis_flwr_armadillo.authenticate.print_summary")
+    @patch("molgenis_flwr_armadillo.authenticate.save_tokens")
+    @patch("molgenis_flwr_armadillo.authenticate.authenticate_node", side_effect=["tokA", "tokB"])
+    @patch(
+        "molgenis_flwr_armadillo.authenticate.load_node_urls",
+        return_value=["https://a.example.com", "https://b.example.com"],
+    )
+    def test_keys_tokens_by_sanitized_url_and_saves(self, mock_urls, mock_node, mock_save, mock_summary):
+        from molgenis_flwr_armadillo.authenticate import authenticate
+
+        tokens = authenticate("flower-nodes.yaml")
+
+        assert tokens == {"a-example-com": "tokA", "b-example-com": "tokB"}
+        mock_save.assert_called_once_with(tokens)
+        mock_summary.assert_called_once_with(["https://a.example.com", "https://b.example.com"])
