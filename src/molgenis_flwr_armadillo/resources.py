@@ -8,20 +8,23 @@ from rich.console import Console
 from rich.tree import Tree
 
 from molgenis_flwr_armadillo.authenticate import load_node_urls, load_tokens
-from molgenis_flwr_armadillo.helpers import list_projects, list_resources, sanitize_url
+from molgenis_flwr_armadillo.helpers import (
+    check_access,
+    list_projects,
+    list_resources,
+    sanitize_url,
+)
 
 console = Console()
 
 
 def build_resource_tree(url: str, token: str, only_project: str | None) -> Tree:
     """Return a tree of the projects (and their resources) visible at one node."""
-    projects = list_projects(url, token)
     if only_project:
-        if only_project not in projects:
-            raise RuntimeError(
-                f"No access to project '{only_project}'. Available: {', '.join(projects)}"
-            )
+        check_access(url, token, only_project)
         projects = [only_project]
+    else:
+        projects = list_projects(url, token)
 
     tree = Tree(f"[cyan]{url}[/cyan]")
     if not projects:

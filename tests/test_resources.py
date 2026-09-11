@@ -37,17 +37,17 @@ class TestBuildResourceTree:
         ]
 
     @patch("molgenis_flwr_armadillo.resources.list_resources", return_value=["x.pt"])
-    @patch("molgenis_flwr_armadillo.resources.list_projects", return_value=["a", "b"])
-    def test_filters_to_requested_project(self, mock_projects, mock_resources):
+    @patch("molgenis_flwr_armadillo.resources.check_access")
+    def test_filters_to_requested_project(self, mock_check, mock_resources):
         labels = _labels(build_resource_tree("http://h", "tok", "a"))
 
         assert "[green]a[/green]" in labels
-        assert "[green]b[/green]" not in labels
+        mock_check.assert_called_once_with("http://h", "tok", "a")
         mock_resources.assert_called_once_with("http://h", "tok", "a")
 
-    @patch("molgenis_flwr_armadillo.resources.list_projects", return_value=["a"])
-    def test_raises_when_requested_project_not_accessible(self, mock_projects):
-        with pytest.raises(RuntimeError, match="No access to project 'zzz'"):
+    @patch("molgenis_flwr_armadillo.resources.check_access", side_effect=RuntimeError("no access"))
+    def test_raises_when_requested_project_not_accessible(self, mock_check):
+        with pytest.raises(RuntimeError, match="no access"):
             build_resource_tree("http://h", "tok", "zzz")
 
     @patch("molgenis_flwr_armadillo.resources.list_resources", side_effect=RuntimeError("boom"))
