@@ -26,7 +26,7 @@ dependencies = [
   "pyyaml",
   "requests",
   "rich",
-  "flwr>=1.27.0",
+  "flwr>=1.32.0,<1.33",
   "molgenis-auth @ git+https://github.com/molgenis/molgenis-python-auth.git",
 ]
 
