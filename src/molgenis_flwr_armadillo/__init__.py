@@ -1,4 +1,5 @@
-from molgenis_flwr_armadillo.authenticate import authenticate
+"""Wrapper for running Flower federated learning with Molgenis Armadillo."""
+
 from molgenis_flwr_armadillo.helpers import (
     extract_tokens,
     get_node_token,
@@ -7,7 +8,6 @@ from molgenis_flwr_armadillo.helpers import (
 )
 
 __all__ = [
-    "authenticate",
     "extract_tokens",
     "get_node_token",
     "get_node_url",
