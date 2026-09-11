@@ -8,8 +8,6 @@ single ``armadillo-tokens`` run-config key and hands them to ``flwr run`` via
 a private TOML file rather than argv, so they never appear in process listings.
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import os

@@ -118,7 +118,6 @@ def get_node_token(msg: Message) -> str:
         @app.train()
         def train(msg: Message, context: Context):
             token = get_node_token(msg)
-            data = fetch_from_armadillo(token)
             # ...
     """
     url = get_node_url()
