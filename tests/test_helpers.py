@@ -2,8 +2,9 @@
 
 import base64
 import json
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from molgenis_flwr_armadillo.helpers import (
     TOKENS_KEY,

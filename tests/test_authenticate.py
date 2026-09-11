@@ -70,7 +70,7 @@ class TestSaveAndLoadTokens:
         """Should save and load tokens correctly."""
         # Get the actual module (not the function)
         auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import save_tokens, load_tokens
+        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
 
         # Use a temp file for testing
         test_token_file = tmp_path / "test_tokens.json"
@@ -111,7 +111,7 @@ class TestSaveAndLoadTokens:
     def test_save_overwrites_existing(self, tmp_path):
         """Should overwrite existing token file."""
         auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import save_tokens, load_tokens
+        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
 
         test_token_file = tmp_path / "test_tokens.json"
         original_token_file = auth_mod.TOKEN_FILE
@@ -132,7 +132,7 @@ class TestSaveAndLoadTokens:
     def test_handles_empty_tokens(self, tmp_path):
         """Should handle empty token dict."""
         auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import save_tokens, load_tokens
+        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
 
         test_token_file = tmp_path / "test_tokens.json"
         original_token_file = auth_mod.TOKEN_FILE
