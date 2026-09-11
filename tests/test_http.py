@@ -1,15 +1,22 @@
 """Tests for the authenticated Armadillo request helper."""
 
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import patch
 
 import pytest
 import requests
 
 from molgenis_flwr_armadillo._http import _request
 
+ENDPOINT = "http://localhost:8080/p"
 
-def _http_error(status: int) -> requests.exceptions.HTTPError:
-    return requests.exceptions.HTTPError(response=MagicMock(status_code=status))
+
+def _response(status: int, body: dict | str = "") -> requests.Response:
+    """A real requests.Response with the given status and JSON (dict) or text body."""
+    response = requests.Response()
+    response.status_code = status
+    response._content = (json.dumps(body) if isinstance(body, dict) else body).encode()
+    return response
 
 
 class TestRequest:
@@ -41,20 +48,25 @@ class TestRequest:
         assert mock_request.call_args[0][1] == "http://localhost:8080/p"
 
     @pytest.mark.parametrize(
-        ("status", "message"),
+        ("status", "body", "message"),
         [
-            (401, "Authentication failed"),
-            (403, "Access denied"),
-            (404, "Not found"),
-            (500, "HTTP 500"),
+            (400, {"message": "fabHash must be 64 hex chars"}, f"Bad request ({ENDPOINT}): fabHash must be 64 hex chars"),
+            (401, {}, f"Unauthorized ({ENDPOINT}). Re-run armadillo-flwr-authenticate to get a new token."),
+            (403, {"message": "ignored"}, f"Access denied ({ENDPOINT})"),
+            (404, {"message": "ignored"}, f"Not found ({ENDPOINT})"),
+            (500, {"message": "boom"}, f"Internal server error ({ENDPOINT}): boom"),
+            (503, "maintenance", f"Service unavailable ({ENDPOINT}): maintenance"),
+            (409, {"message": "already exists"}, f"HTTP 409 ({ENDPOINT}): already exists"),
         ],
     )
     @patch("molgenis_flwr_armadillo._http.requests.request")
-    def test_maps_http_errors(self, mock_request, status, message):
-        mock_request.return_value.raise_for_status.side_effect = _http_error(status)
+    def test_maps_http_errors_like_dsmolgenisarmadillo(self, mock_request, status, body, message):
+        mock_request.return_value = _response(status, body)
 
-        with pytest.raises(RuntimeError, match=message):
+        with pytest.raises(RuntimeError) as exc_info:
             _request("GET", "http://localhost:8080", "tok", "/p")
+
+        assert str(exc_info.value) == message
 
     @patch("molgenis_flwr_armadillo._http.requests.request")
     def test_maps_connection_error(self, mock_request):
