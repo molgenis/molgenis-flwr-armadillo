@@ -156,3 +156,15 @@ class TestAuthenticate:
         assert tokens == {"a-example-com": "tokA", "b-example-com": "tokB"}
         mock_save.assert_called_once_with(tokens)
         mock_summary.assert_called_once_with(["https://a.example.com", "https://b.example.com"])
+
+
+class TestMain:
+    """Tests for the armadillo-flwr-authenticate entry point."""
+
+    def test_exits_cleanly_when_config_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("sys.argv", ["armadillo-flwr-authenticate", "--config", str(tmp_path / "none.yaml")])
+
+        with pytest.raises(SystemExit) as exc_info:
+            auth_mod.main()
+
+        assert exc_info.value.code == 1
