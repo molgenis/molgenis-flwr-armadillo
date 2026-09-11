@@ -62,7 +62,7 @@ class VerifiedClientAppExecPlugin(ClientAppExecPlugin):
             return False
         try:
             return fab_hash in read_whitelist(self._whitelist_path)
-        except Exception as err:
+        except (OSError, yaml.YAMLError, KeyError, TypeError) as err:
             # An unreadable or malformed whitelist approves nothing.
             log(ERROR, "Cannot read FAB whitelist %s: %s", self._whitelist_path, err)
             return False
@@ -89,7 +89,7 @@ class VerifiedClientAppExecPlugin(ClientAppExecPlugin):
                 reply_to=message,
             )
             push_message(stub, reply, context)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             # A failed reply must not stop the SuperExec from handling later tasks.
             log(ERROR, "Failed to report FAB whitelist rejection: %s", err)
         finally:
