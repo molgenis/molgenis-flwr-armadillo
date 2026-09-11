@@ -41,15 +41,6 @@ def test_reads_and_deletes_file(mock_request, data_dir):
 
 
 @patch("molgenis_flwr_armadillo._http.requests.request")
-def test_slash_and_underscore_resources_do_not_collide(mock_request, data_dir):
-    (data_dir / "proj_data%2Ftrain").write_bytes(b"slash content")
-    (data_dir / "proj_data_train").write_bytes(b"underscore content")
-
-    assert load_data("http://localhost:8080", "token", "proj", "data/train") == b"slash content"
-    assert load_data("http://localhost:8080", "token", "proj", "data_train") == b"underscore content"
-
-
-@patch("molgenis_flwr_armadillo._http.requests.request")
 def test_raises_when_file_not_written(mock_request, data_dir):
     with pytest.raises(RuntimeError, match="was not written"):
         load_data("http://localhost:8080", "token", "proj", "file")

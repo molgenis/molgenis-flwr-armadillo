@@ -48,7 +48,7 @@ def load_data(url: str, token: str, project: str, resource: str) -> bytes:
         },
     )
 
-    # "%2F" (not "_") stands in for "/" so "data/train" and "data_train" can't collide.
+    # Must match the filename Armadillo writes (FlowerDataService: project + "_" + resource with "/" -> "%2F").
     filepath = DATA_DIR / (project + "_" + resource.replace("/", "%2F"))
     if not filepath.exists():
         raise RuntimeError(
