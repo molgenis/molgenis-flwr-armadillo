@@ -22,7 +22,7 @@ from flwr.supercore.constant import PLATFORM_API_URL
 from flwr.supercore.utils import get_flwr_home, parse_app_spec, request_download_link
 from rich.console import Console
 
-from molgenis_flwr_armadillo._http import describe_http_error
+from molgenis_flwr_armadillo._http import _auth_headers, describe_http_error
 from molgenis_flwr_armadillo.authenticate import load_tokens
 from molgenis_flwr_armadillo.helpers import sanitize_url
 
@@ -84,7 +84,7 @@ def armadillo_auth(armadillo: str, user: str | None) -> dict:
             f"No token for {armadillo}. Run armadillo-flwr-authenticate with an admin "
             f"account, or pass --user for basic auth."
         )
-    return {"headers": {"Authorization": f"Bearer {token}"}}
+    return {"headers": _auth_headers(token)}
 
 
 def add_to_whitelist(armadillo: str, container: str, entry: dict, auth: dict) -> None:
@@ -100,15 +100,6 @@ def add_to_whitelist(armadillo: str, container: str, entry: dict, auth: dict) ->
         timeout=30,
         **auth,
     )
-    if response.status_code == 401:
-        raise RuntimeError(
-            f"Token expired or invalid for {armadillo}. Re-run armadillo-flwr-authenticate "
-            f"with an admin account, or pass --user."
-        )
-    if response.status_code == 403:
-        raise RuntimeError(f"This account has no admin rights on {armadillo}.")
-    if response.status_code == 404:
-        raise RuntimeError(f"Container '{container}' not found on {armadillo}.")
     if not response.ok:
         raise RuntimeError(describe_http_error(response, endpoint))
 

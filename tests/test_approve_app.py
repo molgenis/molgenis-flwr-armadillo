@@ -117,9 +117,9 @@ class TestAddToWhitelist:
     @pytest.mark.parametrize(
         ("status", "message"),
         [
-            (401, "Token expired or invalid"),
-            (403, "no admin rights"),
-            (404, "Container 'clientapp-1' not found"),
+            (401, r"Unauthorized \(.*/fab-whitelist\)\. Re-run armadillo-flwr-authenticate"),
+            (403, r"Access denied \(.*/fab-whitelist\)"),
+            (404, r"Not found \(.*/containers/clientapp-1/fab-whitelist\)"),
             (400, r"Bad request \(.*/fab-whitelist\): fabHash must be 64 hex chars"),
         ],
     )
