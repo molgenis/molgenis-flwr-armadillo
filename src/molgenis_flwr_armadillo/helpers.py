@@ -7,6 +7,8 @@ import re
 
 from flwr.app import Context, Message
 
+from molgenis_flwr_armadillo._http import _request
+
 ARMADILLO_URL = os.environ.get("ARMADILLO_URL", "")
 
 # One declared run-config key carries every node token as base64(JSON
@@ -140,3 +142,68 @@ def get_node_token(msg: Message) -> str:
             f"Re-run armadillo-flwr-authenticate if tokens have expired."
         )
     return token
+
+
+def list_projects(url: str, token: str) -> list[str]:
+    """List the projects the user can access as a researcher.
+
+    Calls GET /my/projects on Armadillo. Administrators without researcher roles
+    get an empty list.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+
+    Returns:
+        Project names, e.g. ["project-a", "project-b"]
+    """
+    response = _request("GET", url, token, "/my/projects")
+    # Armadillo derives these from upper-case role names; project names themselves are
+    # always lower case, so lower-casing gives back the real names.
+    return [project.lower() for project in response.json()]
+
+
+def list_resources(url: str, token: str, project: str) -> list[str]:
+    """List the resources in a project, as paths within that project.
+
+    Calls GET /storage/projects/{project}/objects on Armadillo. The names match
+    the ``resource`` argument of ``load_data``.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+        project: Armadillo project name
+
+    Returns:
+        Resource paths, e.g. ["data/train.pt", "data/test.pt"]
+    """
+    response = _request("GET", url, token, f"/storage/projects/{project}/objects")
+    # Armadillo returns "<project>/<path>"; drop the project so names can be passed to load_data.
+    return [name.removeprefix(f"{project}/") for name in response.json()]
+
+
+def check_access(url: str, token: str, project: str, resources: list[str] | None = None) -> None:
+    """Raise RuntimeError unless the user can access the project and the given resources.
+
+    Args:
+        url: Armadillo server URL
+        token: OIDC Bearer token
+        project: Armadillo project name
+        resources: Optional resource paths that must exist in the project
+    """
+    projects = list_projects(url, token)
+    if project not in projects:
+        raise RuntimeError(
+            f"User does not have access to project '{project}' on {url}. "
+            f"Available projects: {projects}. "
+            f"Grant access in Armadillo via POST /access/permissions."
+        )
+
+    if resources:
+        available = list_resources(url, token, project)
+        missing = [r for r in resources if r not in available]
+        if missing:
+            raise RuntimeError(
+                f"Resources not found in project '{project}' on {url}: {missing}. "
+                f"Available resources: {available}"
+            )
