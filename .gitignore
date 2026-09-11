@@ -23,9 +23,6 @@ examples/flower-tutorial-local-data/
 # OS
 .DS_Store
 
-# Tokens (never commit)
-flwr_tokens.json
-
 # Model outputs
 *.pt
 
