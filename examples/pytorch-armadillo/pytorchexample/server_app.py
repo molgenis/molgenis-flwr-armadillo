@@ -1,4 +1,4 @@
-"""pytorchexample: ServerApp that distributes tokens and URLs to clients."""
+"""pytorchexample: ServerApp that distributes tokens to clients."""
 
 import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context
@@ -21,7 +21,7 @@ def main(grid: Grid, context: Context) -> None:
     lr: float = context.run_config["learning-rate"]
     project: str = context.run_config["project"]
 
-    # Collect tokens and URLs from run_config for passing to clients
+    # Collect the token bundle from run_config for passing to clients
     tokens = extract_tokens(context)
 
     # Load global model
@@ -31,7 +31,7 @@ def main(grid: Grid, context: Context) -> None:
     # Initialize FedAvg strategy
     strategy = FedAvg(fraction_train=fraction_train)
 
-    # Build configs: both train and evaluate need tokens + URLs + project
+    # Build configs: both train and evaluate need tokens + project
     train_config = ConfigRecord({"lr": lr, "project": project, **tokens})
     evaluate_config = ConfigRecord({"project": project, **tokens})
 

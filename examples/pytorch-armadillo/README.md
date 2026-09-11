@@ -37,7 +37,7 @@ flwr run .
    the `project` run-config key (default `test-flower`). Use
    `pytorchexample/split_data.py` to generate per-node partitions.
 2. Authenticate with each node: `armadillo-flwr-authenticate`.
-3. Submit the run: `armadillo-flwr-run . --federation local-deployment --stream`.
+3. Submit the run: `armadillo-flwr-run . local-deployment --stream`.
 
 Data pushed into the container is read into memory and deleted immediately;
 see the molgenis-flwr-armadillo documentation for details.
