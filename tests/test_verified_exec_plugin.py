@@ -92,9 +92,13 @@ def test_approval_after_start_takes_effect_without_restart(whitelist):
     assert launch(plugin, "abc123")[1].call_count == 1
 
 
-def test_unreadable_whitelist_rejects(whitelist):
+@pytest.mark.parametrize("content", [None, "a: [unclosed\n", "- not a mapping\n", "- fab_id: x\n"])
+def test_unreadable_or_malformed_whitelist_rejects(whitelist, content):
     path, plugin = whitelist
-    path.unlink()
+    if content is None:
+        path.unlink()
+    else:
+        path.write_text(content)
 
     result, mock_super, _ = launch(plugin, "abc123")
 
