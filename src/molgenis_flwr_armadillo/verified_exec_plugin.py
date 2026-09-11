@@ -31,10 +31,8 @@ def read_whitelist(path: Path) -> set[str]:
 class VerifiedClientAppExecPlugin(ClientAppExecPlugin):
     """ClientApp SuperExec plugin that only launches whitelisted FABs.
 
-    ``select_task`` is left at the default (first-candidate) behaviour so
-    tasks are always claimed; rejection happens in ``launch_task``, once a
-    token is available, so an error reply can be pushed back immediately
-    instead of leaving the task to silently expire.
+    Every task is accepted as usual; the check happens in ``launch_task``,
+    where a token is available to send an error reply for a rejected task.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -64,17 +62,16 @@ class VerifiedClientAppExecPlugin(ClientAppExecPlugin):
             return False
         try:
             return fab_hash in read_whitelist(self._whitelist_path)
-        except Exception as err:  # noqa: BLE001 — fail closed on any read/parse error
+        except Exception as err:
+            # An unreadable or malformed whitelist approves nothing.
             log(ERROR, "Cannot read FAB whitelist %s: %s", self._whitelist_path, err)
             return False
 
     def _report_rejection(self, token: str, details: str) -> None:
-        """Reply to the pending task so the ServerApp sees the rejection
-        immediately. A plain status update (PushTaskOutput) isn't enough —
-        only an actual reply Message unblocks the ServerApp's aggregation
-        wait, so this pulls the task's input (for its Message/Context, needed
-        to build a reply) and pushes an error reply, mirroring exactly what
-        run_clientapp.py does for a real ClientApp exception.
+        """Send an error reply for the task so the ServerApp sees the rejection at once.
+
+        Without a reply the ServerApp waits until the task times out. The reply is
+        built the same way run_clientapp.py does when an app raises an exception.
         """
         channel = create_channel(
             server_address=self.appio_api_address,
@@ -92,7 +89,8 @@ class VerifiedClientAppExecPlugin(ClientAppExecPlugin):
                 reply_to=message,
             )
             push_message(stub, reply, context)
-        except Exception as err:  # noqa: BLE001 — never let reporting break the SuperExec loop
+        except Exception as err:
+            # A failed reply must not stop the SuperExec from handling later tasks.
             log(ERROR, "Failed to report FAB whitelist rejection: %s", err)
         finally:
             channel.close()

@@ -1,29 +1,18 @@
-# Batteries-included Flower SuperExec runtime image for Armadillo apps.
-# One image covering the common ML frameworks, so a data station pulls a single
-# runtime and can run any app using them without a live per-run dependency
-# install (run the superexec WITHOUT --allow-runtime-dependency-installation and
-# Flower executes the app in this image's venv, /python/venv).
-#
-# All CPU-only (no CUDA). Also bakes the molgenis-flwr-armadillo package
-# (--no-deps) so apps import the helpers instead of vendoring them.
-#
-# TensorFlow is intentionally NOT included: it has no wheels for the base
-# image's Python 3.13. To support TF, build a separate image on a py3.12 base,
-# or revisit once TF ships py3.13 wheels.
-#
-# Everything is pinned exactly — base image by digest, packages by version — so
-# every data station runs an identical numeric stack (federated determinism).
-#
-# Build from the repo root:
+# Flower SuperExec image for Armadillo clientapp containers.
+# Contains common machine-learning libraries (CPU only), so approved apps run
+# without installing packages, and this package, so apps can import its helpers.
+# TensorFlow is not included: it has no packages for this image's Python 3.13.
+# The base image and all packages are pinned exactly, so every data station runs
+# the same versions. Build from the repository root:
 #   docker build -f docker/superexec-armadillo.Dockerfile -t <image> .
 FROM flwr/superexec:1.32.1@sha256:a851d265cef72e634bfb83bffdde806e6a876f30894ea765862e6536cbac3cef
 
-# Deep learning — CPU-only PyTorch from the PyTorch CPU index.
+# PyTorch, CPU version, from the PyTorch package index.
 RUN pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu \
       torch==2.6.0 torchvision==0.21.0
 
-# Classic / tabular ML, from PyPI.
+# Other machine-learning and data libraries, from PyPI.
 RUN pip install --no-cache-dir \
       numpy==2.5.3 \
       scipy==1.18.1 \
