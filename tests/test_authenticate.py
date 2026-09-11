@@ -1,10 +1,19 @@
 """Tests for authentication functions."""
 
 import stat
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+import molgenis_flwr_armadillo.authenticate as auth_mod
+
+
+@pytest.fixture
+def token_file(tmp_path, monkeypatch):
+    """Point TOKEN_FILE at a fresh path under tmp_path."""
+    path = tmp_path / ".molgenis-flwr" / "tokens.json"
+    monkeypatch.setattr(auth_mod, "TOKEN_FILE", path)
+    return path
 
 
 class TestGetAuthInfo:
@@ -53,87 +62,37 @@ class TestGetAuthInfo:
 class TestSaveAndLoadTokens:
     """Tests for save_tokens and load_tokens functions."""
 
-    def test_save_and_load_roundtrip(self, tmp_path):
-        """Should save and load tokens correctly."""
-        # Get the actual module (not the function)
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
+    def test_save_and_load_roundtrip(self, token_file):
+        tokens = {"a-example-com": "tokA", "localhost-8080": "tokB"}
 
-        # Use a temp file for testing
-        test_token_file = tmp_path / "test_tokens.json"
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
+        auth_mod.save_tokens(tokens)
 
-        try:
-            tokens = {
-                "token-demo": "abc123",
-                "token-localhost": "xyz789",
-            }
+        assert auth_mod.load_tokens() == tokens
 
-            # Patch console to avoid output during tests
-            with patch.object(auth_mod, "console"):
-                save_tokens(tokens)
+    def test_load_raises_when_file_missing(self, token_file):
+        with pytest.raises(FileNotFoundError, match="No tokens found"):
+            auth_mod.load_tokens()
 
-            loaded = load_tokens()
+    def test_save_overwrites_existing(self, token_file):
+        auth_mod.save_tokens({"a-example-com": "old"})
+        auth_mod.save_tokens({"b-example-com": "new"})
 
-            assert loaded == tokens
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
+        assert auth_mod.load_tokens() == {"b-example-com": "new"}
 
-    def test_load_raises_when_file_missing(self, tmp_path):
-        """Should raise FileNotFoundError when token file doesn't exist."""
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import load_tokens
+    def test_token_file_is_private(self, token_file):
+        """Should create the file 0600, and restrict a pre-existing looser one."""
+        token_file.parent.mkdir()
+        token_file.write_text("{}")
+        token_file.chmod(0o644)
 
-        test_token_file = tmp_path / "nonexistent.json"
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
+        auth_mod.save_tokens({"a-example-com": "tokA"})
 
-        try:
-            with pytest.raises(FileNotFoundError, match="No tokens found"):
-                load_tokens()
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
+        assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
 
-    def test_save_overwrites_existing(self, tmp_path):
-        """Should overwrite existing token file."""
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
+    def test_creates_private_directory(self, token_file):
+        auth_mod.save_tokens({"a-example-com": "tokA"})
 
-        test_token_file = tmp_path / "test_tokens.json"
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
-
-        try:
-            with patch.object(auth_mod, "console"):
-                save_tokens({"token-old": "old-value"})
-                save_tokens({"token-new": "new-value"})
-
-            loaded = load_tokens()
-
-            assert loaded == {"token-new": "new-value"}
-            assert "token-old" not in loaded
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
-
-    def test_token_file_is_private(self, tmp_path):
-        """Should create the file 0600, and tighten a pre-existing looser one."""
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import save_tokens
-
-        test_token_file = tmp_path / "test_tokens.json"
-        test_token_file.write_text("{}")
-        test_token_file.chmod(0o644)
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
-
-        try:
-            with patch.object(auth_mod, "console"):
-                save_tokens({"demo": "abc123"})
-
-            assert stat.S_IMODE(test_token_file.stat().st_mode) == 0o600
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
+        assert stat.S_IMODE(token_file.parent.stat().st_mode) == 0o700
 
 
 class TestLoadNodeUrls:
@@ -146,6 +105,14 @@ class TestLoadNodeUrls:
         config.write_text('urls:\n  - "https://a.example.com"\n  - "https://b.example.com"\n')
 
         assert load_node_urls(str(config)) == ["https://a.example.com", "https://b.example.com"]
+
+    @pytest.mark.parametrize("content", ["", "nodes:\n  - x\n"])
+    def test_raises_when_urls_missing(self, tmp_path, content):
+        config = tmp_path / "flower-nodes.yaml"
+        config.write_text(content)
+
+        with pytest.raises(ValueError, match="has no 'urls' list"):
+            auth_mod.load_node_urls(str(config))
 
 
 class TestAuthenticateNode:

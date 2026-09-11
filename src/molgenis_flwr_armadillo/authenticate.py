@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import requests
@@ -16,7 +15,9 @@ from molgenis_flwr_armadillo.helpers import sanitize_url
 
 console = Console()
 
-TOKEN_FILE = Path(tempfile.gettempdir()) / "flwr_tokens.json"
+# In the user's home, not the shared temp dir: on multi-user hosts /tmp lets another
+# account pre-create or symlink a fixed-name file and read the tokens written into it.
+TOKEN_FILE = Path.home() / ".molgenis-flwr" / "tokens.json"
 
 
 def get_auth_info(armadillo_url: str) -> dict:
@@ -37,7 +38,10 @@ def get_auth_info(armadillo_url: str) -> dict:
 def load_node_urls(config_path: str) -> list[str]:
     """Read the Armadillo URLs from a flower-nodes.yaml config."""
     with open(config_path) as f:
-        return yaml.safe_load(f)["urls"]
+        config = yaml.safe_load(f) or {}
+    if "urls" not in config:
+        raise ValueError(f"{config_path} has no 'urls' list")
+    return config["urls"]
 
 
 def authenticate_node(url: str) -> str:
@@ -84,7 +88,8 @@ def authenticate(config_path: str) -> dict:
 
 
 def save_tokens(tokens: dict) -> None:
-    """Save tokens to a private (0600) temp file."""
+    """Save tokens to a private (0600) file in a private (0700) directory."""
+    TOKEN_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(tokens, f)
@@ -93,7 +98,7 @@ def save_tokens(tokens: dict) -> None:
 
 
 def load_tokens() -> dict:
-    """Load tokens from temp file."""
+    """Load the tokens saved by armadillo-flwr-authenticate."""
     if not TOKEN_FILE.exists():
         raise FileNotFoundError("No tokens found. Run 'armadillo-flwr-authenticate' first.")
 
