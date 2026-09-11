@@ -8,9 +8,12 @@ import pytest
 
 from molgenis_flwr_armadillo.helpers import (
     TOKENS_KEY,
+    check_access,
     extract_tokens,
     get_node_token,
     get_node_url,
+    list_projects,
+    list_resources,
     sanitize_url,
 )
 
@@ -148,3 +151,69 @@ class TestGetNodeToken:
         }
 
         assert get_node_token(msg) == "the-token"
+
+
+def _armadillo(projects, objects):
+    """Fake _request returning Armadillo's real shapes: upper-case project names from
+    /my/projects and "<project>/<path>" names from /storage/projects/{project}/objects."""
+    def request(method, url, token, path):
+        response = MagicMock()
+        response.json.return_value = projects if path == "/my/projects" else objects
+        return response
+    return request
+
+
+class TestListProjects:
+    """Tests for list_projects function."""
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_returns_lower_case_project_names(self, mock_request):
+        mock_request.side_effect = _armadillo(["PROJECT-A", "MYPROJECT"], [])
+
+        assert list_projects("http://localhost:8080", "tok") == ["project-a", "myproject"]
+        mock_request.assert_called_once_with("GET", "http://localhost:8080", "tok", "/my/projects")
+
+
+class TestListResources:
+    """Tests for list_resources function."""
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_returns_paths_within_the_project(self, mock_request):
+        mock_request.side_effect = _armadillo([], ["proj/data/train.pt", "proj/test.pt"])
+
+        assert list_resources("http://localhost:8080", "tok", "proj") == ["data/train.pt", "test.pt"]
+        mock_request.assert_called_once_with(
+            "GET", "http://localhost:8080", "tok", "/storage/projects/proj/objects"
+        )
+
+
+class TestCheckAccess:
+    """Tests for check_access function, against Armadillo's real response shapes."""
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_passes_for_accessible_project_and_existing_resources(self, mock_request):
+        mock_request.side_effect = _armadillo(["PROJ"], ["proj/data/train.pt", "proj/test.pt"])
+
+        check_access("http://localhost:8080", "tok", "proj", ["data/train.pt"])
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_skips_resource_check_when_none_requested(self, mock_request):
+        mock_request.side_effect = _armadillo(["PROJ"], [])
+
+        check_access("http://localhost:8080", "tok", "proj")
+
+        assert mock_request.call_count == 1
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_raises_when_project_not_accessible(self, mock_request):
+        mock_request.side_effect = _armadillo(["OTHER"], [])
+
+        with pytest.raises(RuntimeError, match="does not have access to project 'proj'"):
+            check_access("http://localhost:8080", "tok", "proj")
+
+    @patch("molgenis_flwr_armadillo.helpers._request")
+    def test_raises_listing_missing_resources(self, mock_request):
+        mock_request.side_effect = _armadillo(["PROJ"], ["proj/a.pt"])
+
+        with pytest.raises(RuntimeError, match=r"\['b.pt'\]"):
+            check_access("http://localhost:8080", "tok", "proj", ["a.pt", "b.pt"])
