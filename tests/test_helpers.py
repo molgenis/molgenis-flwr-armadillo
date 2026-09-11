@@ -23,43 +23,24 @@ def _blob(mapping: dict) -> str:
 class TestSanitizeUrl:
     """Tests for sanitize_url function."""
 
-    def test_strips_https_scheme(self):
-        assert sanitize_url("https://armadillo-demo.molgenis.net") == "armadillo-demo-molgenis-net"
+    @pytest.mark.parametrize(
+        ("url", "key"),
+        [
+            ("https://armadillo-demo.molgenis.net", "armadillo-demo-molgenis-net"),
+            ("http://armadillo-demo.molgenis.net", "armadillo-demo-molgenis-net"),
+            ("HTTPS://Armadillo-DEMO.Molgenis.NET/", "armadillo-demo-molgenis-net"),
+            ("http://localhost:8080", "localhost-8080"),
+            ("https://host...name", "host-name"),
+            ("https:///host/", "host"),
+        ],
+    )
+    def test_converts_url_to_key(self, url, key):
+        assert sanitize_url(url) == key
 
-    def test_strips_http_scheme(self):
-        assert sanitize_url("http://localhost:8080") == "localhost-8080"
-
-    def test_strips_trailing_slash(self):
-        assert sanitize_url("https://armadillo-demo.molgenis.net/") == "armadillo-demo-molgenis-net"
-
-    def test_lowercases(self):
-        assert sanitize_url("https://Armadillo-DEMO.Molgenis.NET") == "armadillo-demo-molgenis-net"
-
-    def test_replaces_dots_with_hyphens(self):
-        assert sanitize_url("https://armadillo.dev.molgenis.org") == "armadillo-dev-molgenis-org"
-
-    def test_collapses_multiple_special_chars(self):
-        assert sanitize_url("https://host...name") == "host-name"
-
-    def test_strips_leading_trailing_hyphens(self):
-        assert sanitize_url("https:///host/") == "host"
-
-    def test_raises_on_empty_string(self):
-        with pytest.raises(ValueError, match="must not be empty"):
-            sanitize_url("")
-
-    def test_raises_on_scheme_only(self):
-        with pytest.raises(ValueError, match="sanitizes to empty"):
-            sanitize_url("https://")
-
-    def test_preserves_port(self):
-        assert sanitize_url("https://localhost:9090") == "localhost-9090"
-
-    def test_consistent_results(self):
-        """Same URL with different formatting produces same key."""
-        assert sanitize_url("https://demo.molgenis.net") == sanitize_url("https://demo.molgenis.net/")
-        assert sanitize_url("http://demo.molgenis.net") == sanitize_url("https://demo.molgenis.net")
-        assert sanitize_url("HTTPS://Demo.Molgenis.NET") == sanitize_url("https://demo.molgenis.net")
+    @pytest.mark.parametrize(("url", "message"), [("", "must not be empty"), ("https://", "sanitizes to empty")])
+    def test_rejects_urls_with_no_host(self, url, message):
+        with pytest.raises(ValueError, match=message):
+            sanitize_url(url)
 
 
 class TestExtractTokens:
@@ -80,12 +61,6 @@ class TestExtractTokens:
     def test_returns_empty_dict_when_no_tokens(self):
         context = MagicMock()
         context.run_config = {"learning-rate": 0.1}
-
-        assert extract_tokens(context) == {}
-
-    def test_handles_empty_run_config(self):
-        context = MagicMock()
-        context.run_config = {}
 
         assert extract_tokens(context) == {}
 

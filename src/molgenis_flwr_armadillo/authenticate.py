@@ -88,7 +88,7 @@ def save_tokens(tokens: dict) -> None:
     fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(tokens, f)
-    # O_CREAT's mode only applies to a newly created file; tighten an existing one too.
+    # os.open's 0o600 only applies when it creates the file; also set it on an existing one.
     TOKEN_FILE.chmod(0o600)
 
 
