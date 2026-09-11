@@ -50,7 +50,7 @@ def main() -> None:
     console.print("[dim]Injecting tokens from armadillo-flwr-authenticate[/dim]")
     config_path = write_run_config(tokens)
     try:
-        result = subprocess.run(build_command(sys.argv[1:], config_path))
+        result = subprocess.run(build_command(sys.argv[1:], config_path), check=False)
     finally:
         config_path.unlink(missing_ok=True)
     sys.exit(result.returncode)
