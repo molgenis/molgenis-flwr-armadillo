@@ -19,11 +19,10 @@ raw = load_data(url, token, "my-project", "train.parquet")
 1. `load_data()` calls `POST /flower/push-data` on Armadillo
 2. Armadillo validates the OIDC token and checks project permissions
 3. Armadillo reads the resource from storage
-4. Armadillo copies the data into the container via Docker API
-5. `load_data()` waits for the file to appear at `/tmp/armadillo_data/`
-6. The file is read into memory as raw bytes
-7. The file is deleted immediately
-8. Raw bytes are returned
+4. Armadillo copies the data into `/tmp/armadillo_data/` in the container and replies once the copy is complete
+5. The file is read into memory as raw bytes
+6. The file is deleted immediately
+7. Raw bytes are returned
 
 ### File lifecycle
 
