@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import requests
@@ -116,6 +117,10 @@ def main():
     )
     args = parser.parse_args()
 
-    authenticate(args.config)
+    try:
+        authenticate(args.config)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
 
     console.print("\n[green]Ready to run:[/green] armadillo-flwr-run")
