@@ -42,34 +42,26 @@ def load_node_urls(config_path: str) -> list[str]:
 
 def authenticate_node(url: str) -> str:
     """Run the OIDC device flow against one Armadillo and return its access token."""
-    console.rule(f"[bold blue]{url}[/bold blue]")
-    with console.status(f"Fetching auth info from {url}..."):
+    console.print(f"[bold blue]{url}[/bold blue]")
+    with console.status("Fetching auth info..."):
         auth_info = get_auth_info(url)
-
-    console.print(f"  URL: [cyan]{url}[/cyan]")
-    console.print(f"  Key: [cyan]{sanitize_url(url)}[/cyan]")
-    console.print(f"  Auth server: [cyan]{auth_info['issuerUri']}[/cyan]")
 
     client = MolgenisAuthClient(
         auth_server=auth_info["issuerUri"],
         client_id=auth_info["clientId"],
         scopes="openid offline_access",
     )
-    console.print("  [yellow]Opening browser for authentication...[/yellow]")
-    auth_result = client.device_flow_auth()
-    console.print(f"  [green]✓ {url} authenticated[/green]")
-    return auth_result["access_token"]
+    return client.device_flow_auth()["access_token"]
 
 
 def print_summary(urls: list[str]) -> None:
     """Print the table of authenticated nodes."""
     console.print()
-    table = Table(title="Authenticated Nodes")
+    table = Table(title="Authenticated node" if len(urls) == 1 else "Authenticated nodes")
     table.add_column("URL", style="cyan")
-    table.add_column("Key", style="dim")
     table.add_column("Status", style="green")
     for url in urls:
-        table.add_row(url, sanitize_url(url), "✓ Ready")
+        table.add_row(url, "✓ Ready")
     console.print(table)
 
 
@@ -83,6 +75,8 @@ def authenticate(config_path: str) -> dict:
         Dictionary of {sanitized-url: access token}
     """
     urls = load_node_urls(config_path)
+    noun = "node" if len(urls) == 1 else "nodes"
+    console.print(f"[bold]Authenticating to {len(urls)} Armadillo {noun} from {config_path}[/bold]\n")
     tokens = {sanitize_url(url): authenticate_node(url) for url in urls}
     save_tokens(tokens)
     print_summary(urls)
@@ -96,7 +90,6 @@ def save_tokens(tokens: dict) -> None:
         json.dump(tokens, f)
     # O_CREAT's mode only applies to a newly created file; tighten an existing one too.
     TOKEN_FILE.chmod(0o600)
-    console.print(f"\n[dim]Tokens saved to {TOKEN_FILE}[/dim]")
 
 
 def load_tokens() -> dict:
@@ -117,9 +110,6 @@ def main():
         help="Path to node config file"
     )
     args = parser.parse_args()
-
-    console.print("[bold]Molgenis Flower Armadillo[/bold]")
-    console.print()
 
     authenticate(args.config)
 
