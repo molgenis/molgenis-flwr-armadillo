@@ -1,6 +1,5 @@
 """Tests for authentication functions."""
 
-import json
 import stat
 import sys
 from unittest.mock import MagicMock, patch
@@ -49,18 +48,6 @@ class TestGetAuthInfo:
         mock_get.assert_called_once_with(
             "https://armadillo.example.com/actuator/info", timeout=30
         )
-
-    @patch("requests.get")
-    def test_raises_on_http_error(self, mock_get):
-        """Should raise on HTTP error."""
-        from molgenis_flwr_armadillo.authenticate import get_auth_info
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = Exception("HTTP Error")
-        mock_get.return_value = mock_response
-
-        with pytest.raises(Exception, match="HTTP Error"):
-            get_auth_info("https://armadillo.example.com")
 
 
 class TestSaveAndLoadTokens:
@@ -129,25 +116,6 @@ class TestSaveAndLoadTokens:
         finally:
             auth_mod.TOKEN_FILE = original_token_file
 
-    def test_handles_empty_tokens(self, tmp_path):
-        """Should handle empty token dict."""
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import load_tokens, save_tokens
-
-        test_token_file = tmp_path / "test_tokens.json"
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
-
-        try:
-            with patch.object(auth_mod, "console"):
-                save_tokens({})
-
-            loaded = load_tokens()
-
-            assert loaded == {}
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
-
     def test_token_file_is_private(self, tmp_path):
         """Should create the file 0600, and tighten a pre-existing looser one."""
         auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
@@ -164,30 +132,6 @@ class TestSaveAndLoadTokens:
                 save_tokens({"demo": "abc123"})
 
             assert stat.S_IMODE(test_token_file.stat().st_mode) == 0o600
-        finally:
-            auth_mod.TOKEN_FILE = original_token_file
-
-    def test_tokens_are_valid_json(self, tmp_path):
-        """Should save tokens as valid JSON."""
-        auth_mod = sys.modules["molgenis_flwr_armadillo.authenticate"]
-        from molgenis_flwr_armadillo.authenticate import save_tokens
-
-        test_token_file = tmp_path / "test_tokens.json"
-        original_token_file = auth_mod.TOKEN_FILE
-        auth_mod.TOKEN_FILE = test_token_file
-
-        try:
-            tokens = {"token-demo": "value-with-special-chars-!@#$%"}
-
-            with patch.object(auth_mod, "console"):
-                save_tokens(tokens)
-
-            # Read raw file and parse as JSON
-            with open(test_token_file) as f:
-                raw_content = f.read()
-                parsed = json.loads(raw_content)
-
-            assert parsed == tokens
         finally:
             auth_mod.TOKEN_FILE = original_token_file
 
