@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.11+
 - Access to one or more MOLGENIS Armadillo servers
 - A Flower SuperLink and SuperNode deployment
 
@@ -18,22 +18,13 @@ urls:
   - "https://armadillo.dev.molgenis.org"
 ```
 
-### 2. Add token placeholders to `pyproject.toml`
+### 2. Add the token placeholder to `pyproject.toml`
 
-Each URL is sanitized into a config key. Add empty token placeholders:
+All node tokens travel in one run-config key. Declare it empty:
 
 ```toml
 [tool.flwr.app.config]
-token-armadillo-demo-molgenis-net = ""
-token-armadillo-dev-molgenis-org = ""
-```
-
-You can check the sanitized key for any URL:
-
-```python
-from molgenis_flwr_armadillo import sanitize_url
-print(sanitize_url("https://armadillo-demo.molgenis.net"))
-# armadillo-demo-molgenis-net
+armadillo-tokens = ""
 ```
 
 ### 3. Authenticate
