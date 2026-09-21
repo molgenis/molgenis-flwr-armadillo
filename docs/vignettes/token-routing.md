@@ -49,16 +49,17 @@ This ensures `https://Demo.Molgenis.NET/` and `http://demo.molgenis.net` produce
 
 ## Token File Format
 
-After authentication, tokens are saved to `~/.molgenis-flwr/tokens.json`, readable only by you:
+After authentication, tokens are saved as:
 
 ```json
 {
-  "armadillo-demo-molgenis-net": "eyJ..."
+  "token-armadillo-demo-molgenis-net": "eyJ...",
+  "url-armadillo-demo-molgenis-net": "https://armadillo-demo.molgenis.net"
 }
 ```
 
-`armadillo-flwr-run` passes the whole map to Flower as one run-config key, `armadillo-tokens`, holding base64-encoded JSON.
+The `token-*` keys are injected into Flower's `--run-config`. The `url-*` keys are kept locally for the `armadillo-flwr-resources` CLI.
 
 ## Environment Variable
 
-Armadillo injects the `ARMADILLO_URL` environment variable into each container it starts. The helper functions read this to identify which token belongs to the current node, so it must match the URL in the researcher's `flower-nodes.yaml`.
+Armadillo injects the `ARMADILLO_URL` environment variable into each container it starts. The helper functions read this to identify which token belongs to the current node — no manual configuration needed on the container side.
