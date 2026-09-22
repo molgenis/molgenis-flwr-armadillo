@@ -7,16 +7,14 @@ Data loading follows the same pattern as DataSHIELD's `assign.table()`: the clie
 ## The `load_data()` Function
 
 ```python
-from molgenis_flwr_armadillo import get_node_token, get_node_url, load_data
+from molgenis_flwr_armadillo import load_data
 
-url = get_node_url()
-token = get_node_token(msg)
-raw = load_data(url, token, "my-project", "train.parquet")
+raw = load_data(msg, "my-project", "train.parquet")
 ```
 
 ### What happens under the hood
 
-1. `load_data()` calls `POST /flower/push-data` on Armadillo
+1. `load_data()` reads this node's URL from `ARMADILLO_URL` and its token from `msg`, then calls `POST /flower/push-data` on Armadillo
 2. Armadillo validates the OIDC token and checks project permissions
 3. Armadillo reads the resource from storage
 4. Armadillo copies the data into `/tmp/armadillo_data/` in the container and replies once the copy is complete
@@ -43,16 +41,16 @@ import io
 import pandas as pd
 
 # Parquet
-raw = load_data(url, token, "project", "data.parquet")
+raw = load_data(msg, "project", "data.parquet")
 df = pd.read_parquet(io.BytesIO(raw))
 
 # CSV
-raw = load_data(url, token, "project", "data.csv")
+raw = load_data(msg, "project", "data.csv")
 df = pd.read_csv(io.BytesIO(raw))
 
 # PyTorch tensor
 import torch
-raw = load_data(url, token, "project", "model.pt")
+raw = load_data(msg, "project", "model.pt")
 data = torch.load(io.BytesIO(raw))
 ```
 

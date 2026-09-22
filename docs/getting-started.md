@@ -61,16 +61,14 @@ def main(grid: Grid, context: Context) -> None:
 
 ### Client app
 
-Each client reads its URL and token from the environment / config:
+Each client passes the incoming message to `load_data`, which looks up its node's URL and token:
 
 ```python
-from molgenis_flwr_armadillo import get_node_token, get_node_url, load_data
+from molgenis_flwr_armadillo import load_data
 
 @app.train()
 def train(msg: Message, context: Context):
-    url = get_node_url()
-    token = get_node_token(msg)
-    raw = load_data(url, token, "my-project", "train.parquet")
+    raw = load_data(msg, "my-project", "train.parquet")
     df = pd.read_parquet(io.BytesIO(raw))
     # train model...
 ```
