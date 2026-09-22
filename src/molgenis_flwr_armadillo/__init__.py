@@ -1,5 +1,6 @@
 """Wrapper for running Flower federated learning with Molgenis Armadillo."""
 
+from molgenis_flwr_armadillo.data import load_data
 from molgenis_flwr_armadillo.helpers import (
     extract_tokens,
     get_node_token,
@@ -11,5 +12,6 @@ __all__ = [
     "extract_tokens",
     "get_node_token",
     "get_node_url",
+    "load_data",
     "sanitize_url",
 ]
