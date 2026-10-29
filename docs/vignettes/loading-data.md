@@ -14,7 +14,7 @@ raw = load_data(msg, "my-project", "train.parquet")
 
 ### What happens under the hood
 
-1. `load_data()` reads this node's URL from `ARMADILLO_URL` and its token from `msg`, then calls `POST /flower/push-data` on Armadillo
+1. `load_data()` reads this node's URL from `ARMADILLO_URL` and its token from `msg`, then calls `POST /flower/load-data` on Armadillo
 2. Armadillo validates the OIDC token and checks project permissions
 3. Armadillo reads the resource from storage
 4. Armadillo copies the data into `/tmp/armadillo_data/` in the container and replies once the copy is complete

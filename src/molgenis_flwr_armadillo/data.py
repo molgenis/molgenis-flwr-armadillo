@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from flwr.app import Message
 
@@ -15,7 +16,7 @@ CONTAINER_NAME = os.environ.get("ARMADILLO_CONTAINER_NAME", "")
 def load_data(msg: Message, project: str, resource: str) -> bytes:
     """Request data from Armadillo, load into memory, delete file.
 
-    Calls POST /flower/push-data on this node's Armadillo, which copies
+    Calls POST /flower/load-data on this node's Armadillo, which copies
     the data into this container at /tmp/armadillo_data/ before
     responding. The file is read into memory and deleted immediately.
 
@@ -39,17 +40,17 @@ def load_data(msg: Message, project: str, resource: str) -> bytes:
         raise RuntimeError("ARMADILLO_CONTAINER_NAME environment variable not set")
 
     _request(
-        "POST", get_node_url(), get_node_token(msg), "/flower/push-data",
+        "POST", get_node_url(), get_node_token(msg), "/flower/load-data",
         timeout=300,
         json={
             "project": project,
-            "resource": resource,
+            "object": resource,
             "containerName": CONTAINER_NAME,
         },
     )
 
-    # Must match the filename Armadillo writes (FlowerDataService: project + "_" + resource with "/" -> "%2F").
-    filepath = DATA_DIR / (project + "_" + resource.replace("/", "%2F"))
+    # Must match the filename Armadillo writes (FlowerServerConnection: URL-encoded "shared-<project>/<resource>").
+    filepath = DATA_DIR / quote_plus(f"shared-{project}/{resource}", safe="")
     if not filepath.exists():
         raise RuntimeError(
             f"Armadillo accepted the push but {filepath} was not written to this container"

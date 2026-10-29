@@ -22,22 +22,22 @@ def data_dir(tmp_path, monkeypatch):
 
 @patch("molgenis_flwr_armadillo._http.requests.request")
 def test_posts_to_armadillo(mock_request, data_dir):
-    (data_dir / "myproject_train.parquet").write_bytes(b"test data")
+    (data_dir / "shared-myproject%2Ftrain.parquet").write_bytes(b"test data")
 
     load_data(MSG, "myproject", "train.parquet")
 
     mock_request.assert_called_once_with(
         "POST",
-        "https://armadillo.example.com/flower/push-data",
+        "https://armadillo.example.com/flower/load-data",
         headers={"Authorization": "Bearer my-token"},
         timeout=300,
-        json={"project": "myproject", "resource": "train.parquet", "containerName": "flower-client-1"},
+        json={"project": "myproject", "object": "train.parquet", "containerName": "flower-client-1"},
     )
 
 
 @patch("molgenis_flwr_armadillo._http.requests.request")
 def test_reads_and_deletes_file(mock_request, data_dir):
-    filepath = data_dir / "proj_data%2Ftrain"
+    filepath = data_dir / "shared-proj%2Fdata%2Ftrain"
     filepath.write_bytes(b"raw file content")
 
     assert load_data(MSG, "proj", "data/train") == b"raw file content"
